@@ -459,9 +459,7 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
 
             // Display recovery instructions
             const instructions = prError.getRecoveryInstructions();
-            for (const instruction of instructions) {
-                logger.error(instruction);
-            }
+            logger.error(instructions);
             logger.error('');
 
             throw prError;
