@@ -1,6 +1,6 @@
 /**
  * @eldrforge/github-tools
- * 
+ *
  * GitHub API utilities for automation - PR management, issue tracking, workflow monitoring
  */
 
@@ -29,17 +29,17 @@ export {
     getOctokit,
     getCurrentBranchName,
     getRepoDetails,
-    
+
     // Pull Requests
     createPullRequest,
     findOpenPullRequestByHeadRef,
     waitForPullRequestChecks,
     mergePullRequest,
-    
+
     // Releases
     createRelease,
     getReleaseByTagName,
-    
+
     // Milestones
     findMilestoneByTitle,
     createMilestone,
@@ -51,18 +51,18 @@ export {
     closeMilestoneForVersion,
     getClosedIssuesForMilestone,
     getMilestoneIssuesForRelease,
-    
+
     // Issues
     getOpenIssues,
     createIssue,
     getIssueDetails,
     getRecentClosedIssuesForCommit,
-    
+
     // Workflows
     getWorkflowRunsTriggeredByRelease,
     waitForReleaseWorkflows,
     getWorkflowsTriggeredByRelease,
-    
+
     // Configuration
     setPromptFunction,
 } from './github';
