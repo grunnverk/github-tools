@@ -9,7 +9,7 @@ export type {
     PullRequest,
     MergeMethod,
     Milestone,
-    Issue,
+    Issue as GitHubIssue,
     Release,
     WorkflowRun,
     CheckRun,
@@ -67,11 +67,13 @@ export {
     setPromptFunction,
 } from './github';
 
-// Export issue operations
+// Export issue operations and types
 export {
     get as getIssuesContent,
     handleIssueCreation,
 } from './issues';
+
+export type { Issue, ReviewResult } from './issues';
 
 // Export release notes
 export {
