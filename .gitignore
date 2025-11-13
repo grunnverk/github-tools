@@ -1,0 +1,16 @@
+.env
+dist
+temp-dist
+node_modules
+*.log
+.vscode
+coverage/
+tsconfig.tsbuildinfo
+output/
+input/
+processed/
+
+# Git hooks (environment-specific)
+.git/hooks/pre-commit
+
+
