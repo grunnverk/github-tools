@@ -254,7 +254,7 @@ describe('releaseNotes', () => {
             expect(result[0]).toContain('=== Local RELEASE_NOTES.md ===');
             expect(result[0]).toContain('# Local Release Notes');
             expect(result[0]).toContain('This is from local file.');
-            expect(mockLogger.warn).toHaveBeenCalledWith('Error fetching releases from GitHub API: %s', 'API Error');
+            expect(mockLogger.warn).toHaveBeenCalledWith('Error fetching releases from GitHub API: API Error');
             expect(mockLogger.debug).toHaveBeenCalledWith('Falling back to local RELEASE_NOTES.md file...');
         });
 
