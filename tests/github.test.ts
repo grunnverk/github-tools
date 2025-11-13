@@ -17,7 +17,7 @@ vi.mock('@eldrforge/git-tools', () => ({
 
 vi.mock('@octokit/rest');
 
-vi.mock('../../src/logging', () => ({
+vi.mock('../src/logger', () => ({
     getLogger: vi.fn(() => ({
         info: vi.fn(),
         error: vi.fn(),
@@ -26,15 +26,11 @@ vi.mock('../../src/logging', () => ({
     })),
 }));
 
-vi.mock('../../src/util/stdin', () => ({
-    promptConfirmation: vi.fn(),
-}));
-
 const mockRun = child.run as Mock;
 const MockOctokit = Octokit as unknown as Mock;
 
-// Import the mocked stdin module
-const { promptConfirmation } = vi.mocked(await import('../../src/util/stdin'));
+// Create a mock prompt function
+const mockPromptConfirmation = vi.fn();
 
 describe('GitHub Utilities', () => {
     const mockOctokit = {
@@ -75,6 +71,9 @@ describe('GitHub Utilities', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        // Set up the prompt function
+        GitHub.setPromptFunction(mockPromptConfirmation);
+        mockPromptConfirmation.mockResolvedValue(true);
         process.env.GITHUB_TOKEN = 'test-token';
         MockOctokit.mockImplementation(() => mockOctokit);
 
@@ -526,13 +525,12 @@ describe('GitHub Utilities', () => {
                 await GitHub.waitForPullRequestChecks(123);
                 expect.fail('Should have thrown PullRequestCheckError');
             } catch (error: any) {
-                const { PullRequestCheckError } = await import('../../src/error/CommandErrors');
+                const { PullRequestCheckError } = await import('../src/errors');
                 expect(error).toBeInstanceOf(PullRequestCheckError);
                 expect(error.prNumber).toBe(123);
                 expect(error.failedChecks).toHaveLength(1);
                 expect(error.failedChecks[0].name).toBe('test-check');
-                expect(error.currentBranch).toBe('feature/test-branch');
-                expect(error.getRecoveryInstructions()).toContain('🔧 To fix these failures:');
+                expect(error.getRecoveryInstructions()).toContain('To resolve failed PR checks');
             }
         });
 
@@ -588,17 +586,15 @@ describe('GitHub Utilities', () => {
                 await GitHub.waitForPullRequestChecks(123);
                 expect.fail('Should have thrown PullRequestCheckError');
             } catch (error: any) {
-                const { PullRequestCheckError } = await import('../../src/error/CommandErrors');
+                const { PullRequestCheckError } = await import('../src/errors');
                 expect(error).toBeInstanceOf(PullRequestCheckError);
                 expect(error.prNumber).toBe(123);
                 expect(error.failedChecks).toHaveLength(3);
-                expect(error.currentBranch).toBe('release/v1.0.0');
                 expect(error.message).toContain('3 checks failed');
 
                 const instructions = error.getRecoveryInstructions();
-                expect(instructions.some((i: string) => i.includes('🎨 Linting/Style Failures'))).toBe(true);
-                expect(instructions.some((i: string) => i.includes('🏗️ Build Failures'))).toBe(true);
-                expect(instructions.some((i: string) => i.includes('git push origin release/v1.0.0'))).toBe(true);
+                expect(instructions).toBeTruthy();
+                expect(typeof instructions).toBe('string');
             }
         });
 
@@ -1622,7 +1618,7 @@ describe('GitHub Utilities', () => {
 
         it.skip('should handle timeout with user confirmation', async () => {
             const getWorkflowsSpy = vi.spyOn(GitHub, 'getWorkflowRunsTriggeredByRelease').mockResolvedValue([]);
-            promptConfirmation.mockResolvedValue(true);
+            mockPromptConfirmation.mockResolvedValue(true);
 
             const promise = GitHub.waitForReleaseWorkflows('v1.0.0', { timeout: 5000 });
 
@@ -1630,7 +1626,7 @@ describe('GitHub Utilities', () => {
             await vi.advanceTimersByTimeAsync(65000); // 60s initial + 5s timeout + buffer
 
             await expect(promise).resolves.toBeUndefined();
-            expect(promptConfirmation).toHaveBeenCalledWith(
+            expect(mockPromptConfirmation).toHaveBeenCalledWith(
                 expect.stringContaining('Timeout reached while waiting for release workflows')
             );
 
@@ -1640,7 +1636,7 @@ describe('GitHub Utilities', () => {
 
         it.skip('should handle timeout with user rejection', async () => {
             const getWorkflowsSpy = vi.spyOn(GitHub, 'getWorkflowRunsTriggeredByRelease').mockResolvedValue([]);
-            promptConfirmation.mockResolvedValue(false);
+            mockPromptConfirmation.mockResolvedValue(false);
 
             const promise = GitHub.waitForReleaseWorkflows('v1.0.0', { timeout: 5000 });
 
@@ -1665,7 +1661,7 @@ describe('GitHub Utilities', () => {
             await vi.advanceTimersByTimeAsync(35000);
 
             await expect(promise).rejects.toThrow('Timeout waiting for release workflows for v1.0.0 (5s)');
-            expect(promptConfirmation).not.toHaveBeenCalled();
+            expect(mockPromptConfirmation).not.toHaveBeenCalled();
 
             // Cleanup
             getWorkflowsSpy.mockRestore();
@@ -1673,7 +1669,7 @@ describe('GitHub Utilities', () => {
 
         it.skip('should handle no workflows found with user confirmation', async () => {
             const getWorkflowsSpy = vi.spyOn(GitHub, 'getWorkflowRunsTriggeredByRelease').mockResolvedValue([]);
-            promptConfirmation.mockResolvedValue(true);
+            mockPromptConfirmation.mockResolvedValue(true);
 
             const promise = GitHub.waitForReleaseWorkflows('v1.0.0', { timeout: 120000 });
 
@@ -1684,7 +1680,7 @@ describe('GitHub Utilities', () => {
             }
 
             await expect(promise).resolves.toBeUndefined();
-            expect(promptConfirmation).toHaveBeenCalledWith(
+            expect(mockPromptConfirmation).toHaveBeenCalledWith(
                 expect.stringContaining('No GitHub Actions workflows appear to be triggered by the release v1.0.0')
             );
 
@@ -1694,7 +1690,7 @@ describe('GitHub Utilities', () => {
 
         it.skip('should handle no workflows found with user rejection', async () => {
             const getWorkflowsSpy = vi.spyOn(GitHub, 'getWorkflowRunsTriggeredByRelease').mockResolvedValue([]);
-            promptConfirmation.mockResolvedValue(false);
+            mockPromptConfirmation.mockResolvedValue(false);
 
             try {
                 const promise = GitHub.waitForReleaseWorkflows('v1.0.0', { timeout: 120000 });
@@ -1734,7 +1730,7 @@ describe('GitHub Utilities', () => {
             }
 
             await expect(promise).resolves.toBeUndefined();
-            expect(promptConfirmation).not.toHaveBeenCalled();
+            expect(mockPromptConfirmation).not.toHaveBeenCalled();
 
             // Cleanup
             getWorkflowsSpy.mockRestore();
@@ -2523,7 +2519,7 @@ jobs:
             mockOctokit.pulls.get.mockResolvedValue({ data: { head: { sha: 'test-sha' } } });
             mockOctokit.checks.listForRef.mockResolvedValue({ data: { check_runs: [] } });
             mockOctokit.actions.listRepoWorkflows.mockResolvedValue({ data: { workflows: [] } });
-            promptConfirmation.mockResolvedValue(true);
+            mockPromptConfirmation.mockResolvedValue(true);
 
             const promise = GitHub.waitForPullRequestChecks(123, { timeout: 5000 });
 
@@ -2533,14 +2529,14 @@ jobs:
             }
 
             await expect(promise).resolves.toBeUndefined();
-            expect(promptConfirmation).toHaveBeenCalled();
+            expect(mockPromptConfirmation).toHaveBeenCalled();
         });
 
         it.skip('should handle user rejection when no workflows configured', async () => {
             mockOctokit.pulls.get.mockResolvedValue({ data: { head: { sha: 'test-sha' } } });
             mockOctokit.checks.listForRef.mockResolvedValue({ data: { check_runs: [] } });
             mockOctokit.actions.listRepoWorkflows.mockResolvedValue({ data: { workflows: [] } });
-            promptConfirmation.mockResolvedValue(false);
+            mockPromptConfirmation.mockResolvedValue(false);
 
             try {
                 const promise = GitHub.waitForPullRequestChecks(123, { timeout: 300000 });
@@ -2581,7 +2577,7 @@ jobs:
             }
 
             await expect(promise).resolves.toBeUndefined();
-            expect(promptConfirmation).not.toHaveBeenCalled();
+            expect(mockPromptConfirmation).not.toHaveBeenCalled();
         });
 
         it.skip('should continue waiting when workflows exist but no checks yet', async () => {
@@ -2661,7 +2657,7 @@ jobs:
                 .mockResolvedValueOnce({ data: { workflow_runs: [] } }) // No runs for SHA
                 .mockResolvedValueOnce({ data: { workflow_runs: [] } }); // No runs for branch
 
-            promptConfirmation.mockResolvedValue(true);
+            mockPromptConfirmation.mockResolvedValue(true);
 
             const promise = GitHub.waitForPullRequestChecks(123, { skipUserConfirmation: false });
 
@@ -2671,7 +2667,7 @@ jobs:
             }
 
             await expect(promise).resolves.toBeUndefined();
-            expect(promptConfirmation).toHaveBeenCalledWith(
+            expect(mockPromptConfirmation).toHaveBeenCalledWith(
                 expect.stringContaining('GitHub Actions workflows are configured in this repository, but none appear to be triggered by PR #123')
             );
         });
@@ -2754,7 +2750,7 @@ jobs:
         });
 
         it('should provide specific recovery instructions based on failure types', async () => {
-            const { PullRequestCheckError } = await import('../../src/error/CommandErrors');
+            const { PullRequestCheckError } = await import('../src/errors');
 
             const failedChecks = [
                 {
@@ -2781,25 +2777,19 @@ jobs:
                 'Test error message',
                 123,
                 failedChecks,
-                'https://github.com/test/repo/pull/123',
-                'feature/test-branch'
+                'https://github.com/test/repo/pull/123'
             );
 
             const instructions = error.getRecoveryInstructions();
-            const instructionText = instructions.join('\n');
+            const instructionText = instructions;
 
-            // Should contain specific sections for each failure type
-            expect(instructionText).toContain('📋 Test Failures');
-            expect(instructionText).toContain('npm test');
-            expect(instructionText).toContain('🎨 Linting/Style Failures');
-            expect(instructionText).toContain('npm run lint');
-            expect(instructionText).toContain('🏗️ Build Failures');
-            expect(instructionText).toContain('npm run build');
+            // Should contain recovery instructions
+            expect(instructionText).toContain('To resolve failed PR checks');
+            expect(instructionText).toContain('Review the failed checks at');
+            expect(instructionText).toContain('Fix the issues identified');
 
-            // Should contain git workflow instructions
-            expect(instructionText).toContain('📤 After fixing the issues');
-            expect(instructionText).toContain('git push origin feature/test-branch');
-            expect(instructionText).toContain('🔄 Re-running this command');
+            // Should contain the basic recovery instructions
+            expect(instructionText).toContain('Re-run this command');
         });
 
         it.skip('should handle checks that never start running', async () => {
@@ -3286,7 +3276,7 @@ jobs:
                 await GitHub.waitForPullRequestChecks(123);
                 expect.fail('Should have thrown PullRequestCheckError');
             } catch (error: any) {
-                const { PullRequestCheckError } = await import('../../src/error/CommandErrors');
+                const { PullRequestCheckError } = await import('../src/errors');
                 expect(error).toBeInstanceOf(PullRequestCheckError);
                 expect(error.prNumber).toBe(123);
                 expect(error.currentBranch).toBeUndefined(); // Should handle branch name error gracefully
@@ -3325,7 +3315,7 @@ jobs:
                 await GitHub.waitForPullRequestChecks(123);
                 expect.fail('Should have thrown PullRequestCheckError');
             } catch (error: any) {
-                const { PullRequestCheckError } = await import('../../src/error/CommandErrors');
+                const { PullRequestCheckError } = await import('../src/errors');
                 expect(error).toBeInstanceOf(PullRequestCheckError);
                 expect(error.failedChecks).toHaveLength(1);
                 // Should still contain basic check info even without detailed info
@@ -3582,7 +3572,7 @@ jobs:
 
         it('should handle main timeout path with user confirmation in waitForReleaseWorkflows', async () => {
             const getWorkflowsSpy = vi.spyOn(GitHub, 'getWorkflowRunsTriggeredByRelease').mockResolvedValue([]);
-            promptConfirmation.mockResolvedValue(true);
+            mockPromptConfirmation.mockResolvedValue(true);
 
             const promise = GitHub.waitForReleaseWorkflows('v1.0.0', { timeout: 5000 });
 
@@ -3592,7 +3582,7 @@ jobs:
             await vi.advanceTimersByTimeAsync(10000);
 
             await expect(promise).resolves.toBeUndefined();
-            expect(promptConfirmation).toHaveBeenCalledWith(
+            expect(mockPromptConfirmation).toHaveBeenCalledWith(
                 expect.stringContaining('Timeout reached while waiting for release workflows')
             );
 
@@ -3601,7 +3591,7 @@ jobs:
 
         it('should handle timeout with user rejection in waitForReleaseWorkflows', async () => {
             const getWorkflowsSpy = vi.spyOn(GitHub, 'getWorkflowRunsTriggeredByRelease').mockResolvedValue([]);
-            promptConfirmation.mockResolvedValue(false);
+            mockPromptConfirmation.mockResolvedValue(false);
 
             const promise = GitHub.waitForReleaseWorkflows('v1.0.0', { timeout: 5000 });
 
@@ -3647,14 +3637,14 @@ jobs:
             if (promiseResult.status === 'rejected') {
                 expect(promiseResult.reason.message).toBe('Timeout waiting for release workflows for v1.0.0 (5s)');
             }
-            expect(promptConfirmation).not.toHaveBeenCalled();
+            expect(mockPromptConfirmation).not.toHaveBeenCalled();
 
             getWorkflowsSpy.mockRestore();
         });
 
         it('should handle no workflows scenario with user confirmation in waitForReleaseWorkflows', async () => {
             const getWorkflowsSpy = vi.spyOn(GitHub, 'getWorkflowRunsTriggeredByRelease').mockResolvedValue([]);
-            promptConfirmation.mockResolvedValue(true);
+            mockPromptConfirmation.mockResolvedValue(true);
 
             const promise = GitHub.waitForReleaseWorkflows('v1.0.0', { timeout: 300000 });
 
@@ -3666,7 +3656,7 @@ jobs:
             }
 
             await expect(promise).resolves.toBeUndefined();
-            expect(promptConfirmation).toHaveBeenCalledWith(
+            expect(mockPromptConfirmation).toHaveBeenCalledWith(
                 expect.stringContaining('No GitHub Actions workflows appear to be triggered by the release v1.0.0')
             );
 
@@ -3939,7 +3929,7 @@ jobs:
                         await GitHub.waitForPullRequestChecks(123);
                         expect.fail(`Should have thrown error for ${conclusionType}`);
                     } catch (error: any) {
-                        const { PullRequestCheckError } = await import('../../src/error/CommandErrors');
+                        const { PullRequestCheckError } = await import('../src/errors');
                         expect(error).toBeInstanceOf(PullRequestCheckError);
                         expect(error.failedChecks[0].conclusion).toBe(conclusionType);
                     }

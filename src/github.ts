@@ -385,15 +385,6 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
             const { owner, repo } = await getRepoDetails();
             const prUrl = `https://github.com/${owner}/${repo}/pull/${prNumber}`;
 
-            // Get current branch name for better guidance
-            let currentBranch: string | undefined;
-            try {
-                currentBranch = await getCurrentBranchName();
-            } catch {
-                // Fallback to generic branch reference if we can't get the current branch
-                currentBranch = undefined;
-            }
-
             // Collect detailed information about each failed check
             const detailedFailedChecks = await Promise.all(
                 failingChecks.map(async (check) => {
