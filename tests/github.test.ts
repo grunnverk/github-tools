@@ -75,7 +75,7 @@ describe('GitHub Utilities', () => {
         GitHub.setPromptFunction(mockPromptConfirmation);
         mockPromptConfirmation.mockResolvedValue(true);
         process.env.GITHUB_TOKEN = 'test-token';
-        MockOctokit.mockImplementation(() => mockOctokit);
+        MockOctokit.mockImplementation(function() { return mockOctokit; });
 
         mockRun.mockImplementation(async (command: string) => {
             if (command === 'git remote get-url origin') {
