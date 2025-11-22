@@ -168,6 +168,154 @@ const hasWorkflowsConfigured = async (): Promise<boolean> => {
 };
 
 /**
+ * Check if workflows are configured and would be triggered for PRs to the target branch
+ * Returns detailed information about workflow configuration
+ */
+export const checkWorkflowConfiguration = async (targetBranch: string = 'main'): Promise<{
+    hasWorkflows: boolean;
+    workflowCount: number;
+    hasPullRequestTriggers: boolean;
+    triggeredWorkflowNames: string[];
+    warning?: string;
+}> => {
+    const octokit = getOctokit();
+    const { owner, repo } = await getRepoDetails();
+    const logger = getLogger();
+
+    try {
+        logger.debug(`Checking workflow configuration for PRs to ${targetBranch}...`);
+
+        const response = await octokit.actions.listRepoWorkflows({
+            owner,
+            repo,
+        });
+
+        const workflows = response.data.workflows;
+
+        if (workflows.length === 0) {
+            return {
+                hasWorkflows: false,
+                workflowCount: 0,
+                hasPullRequestTriggers: false,
+                triggeredWorkflowNames: [],
+                warning: 'No GitHub Actions workflows are configured in this repository'
+            };
+        }
+
+        // Check each workflow to see if it would be triggered by a PR
+        const triggeredWorkflows: string[] = [];
+
+        for (const workflow of workflows) {
+            try {
+                const workflowPath = workflow.path;
+                logger.debug(`Checking workflow: ${workflow.name} (${workflowPath})`);
+
+                const contentResponse = await octokit.repos.getContent({
+                    owner,
+                    repo,
+                    path: workflowPath,
+                });
+
+                if ('content' in contentResponse.data && contentResponse.data.type === 'file') {
+                    const content = Buffer.from(contentResponse.data.content, 'base64').toString('utf-8');
+
+                    if (isTriggeredByPullRequest(content, targetBranch, workflow.name)) {
+                        logger.debug(`✓ Workflow "${workflow.name}" will be triggered by PRs to ${targetBranch}`);
+                        triggeredWorkflows.push(workflow.name);
+                    } else {
+                        logger.debug(`✗ Workflow "${workflow.name}" will not be triggered by PRs to ${targetBranch}`);
+                    }
+                }
+            } catch (error: any) {
+                logger.debug(`Failed to analyze workflow ${workflow.name}: ${error.message}`);
+            }
+        }
+
+        const hasPullRequestTriggers = triggeredWorkflows.length > 0;
+        const warning = !hasPullRequestTriggers
+            ? `${workflows.length} workflow(s) are configured, but none appear to trigger on pull requests to ${targetBranch}`
+            : undefined;
+
+        return {
+            hasWorkflows: true,
+            workflowCount: workflows.length,
+            hasPullRequestTriggers,
+            triggeredWorkflowNames: triggeredWorkflows,
+            warning
+        };
+    } catch (error: any) {
+        logger.debug(`Failed to check workflow configuration: ${error.message}`);
+        // If we can't check, assume workflows might exist to avoid false negatives
+        return {
+            hasWorkflows: true,
+            workflowCount: -1,
+            hasPullRequestTriggers: true,
+            triggeredWorkflowNames: [],
+        };
+    }
+};
+
+/**
+ * Check if a workflow is triggered by pull requests to a specific branch
+ */
+const isTriggeredByPullRequest = (workflowContent: string, targetBranch: string, workflowName: string): boolean => {
+    const logger = getLogger();
+
+    try {
+        // Look for pull_request trigger with branch patterns
+        // Pattern 1: on.pull_request (with or without branch filters)
+        // on:
+        //   pull_request:
+        //     branches: [main, develop, ...]
+        const prEventPattern = /(?:^|\r?\n)[^\S\r\n]*on\s*:\s*\r?\n(?:[^\S\r\n]*[^\r\n]+(?:\r?\n))*?[^\S\r\n]*pull_request\s*:/mi;
+
+        // Pattern 2: on: [push, pull_request] or on: pull_request
+        const onPullRequestPattern = /(?:^|\n)\s*on\s*:\s*(?:\[.*pull_request.*\]|pull_request)\s*(?:\n|$)/m;
+
+        const hasPullRequestTrigger = prEventPattern.test(workflowContent) || onPullRequestPattern.test(workflowContent);
+
+        if (!hasPullRequestTrigger) {
+            return false;
+        }
+
+        // If pull_request trigger is found, check if it matches our target branch
+        // Look for branch restrictions
+        const branchPattern = /pull_request\s*:\s*\r?\n(?:[^\S\r\n]*[^\r\n]+(?:\r?\n))*?[^\S\r\n]*branches\s*:\s*(?:\r?\n|\[)([^\]\r\n]+)/mi;
+        const branchMatch = workflowContent.match(branchPattern);
+
+        if (branchMatch) {
+            const branchesSection = branchMatch[1];
+            logger.debug(`Workflow "${workflowName}" has branch filter: ${branchesSection}`);
+
+            // Check if target branch is explicitly mentioned
+            if (branchesSection.includes(targetBranch)) {
+                logger.debug(`Workflow "${workflowName}" branch filter matches ${targetBranch} (exact match)`);
+                return true;
+            }
+
+            // Check for catch-all patterns (** or standalone *)
+            // But not patterns like "feature/*" which are specific to a prefix
+            if (branchesSection.includes('**') || branchesSection.match(/[[,\s]'?\*'?[,\s\]]/)) {
+                logger.debug(`Workflow "${workflowName}" branch filter matches ${targetBranch} (wildcard match)`);
+                return true;
+            }
+
+            logger.debug(`Workflow "${workflowName}" branch filter does not match ${targetBranch}`);
+            return false;
+        }
+
+        // If no branch filter is specified, the workflow triggers on all PRs
+        logger.debug(`Workflow "${workflowName}" has no branch filter, triggers on all PRs`);
+        return true;
+
+    } catch (error: any) {
+        logger.debug(`Failed to parse workflow content for ${workflowName}: ${error.message}`);
+        // If we can't parse, assume it might trigger to avoid false negatives
+        return true;
+    }
+};
+
+/**
  * Check if any workflow runs have been triggered for a specific PR
  * This is more specific than hasWorkflowsConfigured as it checks for actual runs
  */
@@ -236,7 +384,7 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
 
     const startTime = Date.now();
     let consecutiveNoChecksCount = 0;
-    const maxConsecutiveNoChecks = 6; // 6 consecutive checks (1 minute) with no checks before asking user
+    const maxConsecutiveNoChecks = 3; // 3 consecutive checks (30 seconds) with no checks before deeper investigation
     let checkedWorkflowRuns = false; // Track if we've already checked for workflow runs to avoid repeated checks
 
     while (true) {
@@ -314,6 +462,7 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
                     if (!checkedWorkflowRuns) {
                         logger.info('GitHub Actions workflows are configured. Checking if any workflows are triggered for this PR...');
 
+                        // First check if workflow runs exist at all for this PR's branch/SHA
                         const hasRunsForPR = await hasWorkflowRunsForPR(prNumber);
                         checkedWorkflowRuns = true; // Mark that we've checked
 
@@ -340,13 +489,34 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
                                 return;
                             }
                         } else {
-                            logger.info('Workflow runs detected for this PR. Continuing to wait for checks...');
-                            consecutiveNoChecksCount = 0; // Reset counter since workflow runs exist
+                            // Workflow runs exist on the branch, but they might not be associated with the PR
+                            // This happens when workflows trigger on 'push' but not 'pull_request'
+                            logger.info(`Found workflow runs on the branch, but none appear as PR checks.`);
+                            logger.info(`This usually means workflows trigger on 'push' but not 'pull_request'.`);
+
+                            if (!skipUserConfirmation) {
+                                const proceedWithoutChecks = await promptConfirmation(
+                                    `⚠️  Workflow runs exist for the branch, but no check runs are associated with PR #${prNumber}.\n` +
+                                    `This typically means workflows are configured for 'push' events but not 'pull_request' events.\n` +
+                                    `Do you want to proceed with merging the PR without waiting for checks?`
+                                );
+
+                                if (proceedWithoutChecks) {
+                                    logger.info('User chose to proceed without PR checks (workflows not configured for pull_request events).');
+                                    return;
+                                } else {
+                                    throw new Error(`No PR check runs for #${prNumber} (workflows trigger on push only). User chose not to proceed.`);
+                                }
+                            } else {
+                                // In non-interactive mode, proceed if workflow runs exist but aren't PR checks
+                                logger.info('Workflow runs exist but are not PR checks, proceeding without checks.');
+                                return;
+                            }
                         }
                     } else {
-                        // We've already checked workflow runs and found none that match this PR
+                        // We've already checked workflow runs and found them on the branch but not as PR checks
                         // At this point, we should give up to avoid infinite loops
-                        logger.warn(`Still no checks after ${consecutiveNoChecksCount} attempts. No workflow runs match this PR.`);
+                        logger.warn(`Still no checks after ${consecutiveNoChecksCount} attempts. Workflow runs exist on branch but not as PR checks.`);
 
                         if (!skipUserConfirmation) {
                             const proceedWithoutChecks = await promptConfirmation(
@@ -457,9 +627,11 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
                 prUrl
             );
 
-            // Display recovery instructions
+            // Display recovery instructions (split by line to avoid character-by-character logging)
             const instructions = prError.getRecoveryInstructions();
-            logger.error(instructions);
+            for (const line of instructions.split('\n')) {
+                logger.error(line);
+            }
             logger.error('');
 
             throw prError;

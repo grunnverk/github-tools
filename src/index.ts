@@ -62,6 +62,7 @@ export {
     getWorkflowRunsTriggeredByRelease,
     waitForReleaseWorkflows,
     getWorkflowsTriggeredByRelease,
+    checkWorkflowConfiguration,
 
     // Configuration
     setPromptFunction,
