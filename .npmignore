@@ -1,0 +1,52 @@
+# Source files - don't include in npm package
+src/
+tests/
+
+# Development/config files
+*.config.js
+*.config.mjs
+*.config.ts
+tsconfig.json
+vitest.config.ts
+vite.config.ts
+eslint.config.mjs
+.eslintrc*
+
+# Coverage/test output
+coverage/
+.nyc_output/
+
+# Temp/logs
+*.log
+output/
+input/
+processed/
+temp-dist/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+
+# Git files
+.git/
+.gitignore
+.github/
+
+# Documentation that shouldn't be in package
+*.md
+!README.md
+
+# Include dist directory with all its contents
+!dist/
+
