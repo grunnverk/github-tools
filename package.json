@@ -1,6 +1,6 @@
 {
   "name": "@eldrforge/github-tools",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "GitHub API utilities for automation - PR management, issue tracking, workflow monitoring",
   "main": "dist/index.js",
   "type": "module",
@@ -60,7 +60,7 @@
     "@types/winston": "^2.4.4",
     "@typescript-eslint/eslint-plugin": "^8.39.1",
     "@typescript-eslint/parser": "^8.39.1",
-    "@vitest/coverage-v8": "^3.2.4",
+    "@vitest/coverage-v8": "^4.0.13",
     "esbuild": "0.25.10",
     "eslint": "^9.33.0",
     "eslint-plugin-import": "^2.32.0",
@@ -70,7 +70,7 @@
     "vite": "^7.1.2",
     "vite-plugin-dts": "^4.3.0",
     "vite-plugin-node": "^7.0.0",
-    "vitest": "^3.2.4",
+    "vitest": "^4.0.13",
     "winston": "^3.17.0"
   }
 }
