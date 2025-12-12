@@ -41,7 +41,7 @@
   "author": "Calen Varek <calenvarek@gmail.com>",
   "license": "Apache-2.0",
   "dependencies": {
-    "@eldrforge/git-tools": "^0.1.5",
+    "@eldrforge/git-tools": "^0.1.6",
     "@octokit/rest": "^22.0.0"
   },
   "peerDependencies": {
