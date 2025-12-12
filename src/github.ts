@@ -95,11 +95,29 @@ export const createPullRequest = async (
     title: string,
     body: string,
     head: string,
-    base: string = 'main'
+    base: string = 'main',
+    options: { reuseExisting?: boolean } = {}
 ): Promise<PullRequest> => {
     const octokit = getOctokit();
     const { owner, repo } = await getRepoDetails();
     const logger = getLogger();
+
+    // Check if PR already exists (pre-flight check)
+    if (options.reuseExisting !== false) {
+        logger.debug(`Checking for existing PR with head: ${head}`);
+        const existingPR = await findOpenPullRequestByHeadRef(head);
+
+        if (existingPR) {
+            if (existingPR.base.ref === base) {
+                logger.info(`♻️  Reusing existing PR #${existingPR.number}: ${existingPR.html_url}`);
+                return existingPR;
+            } else {
+                logger.warn(`⚠️  Existing PR #${existingPR.number} found but targets different base (${existingPR.base.ref} vs ${base})`);
+                logger.warn(`   PR URL: ${existingPR.html_url}`);
+                logger.warn(`   You may need to close the existing PR or use a different branch name`);
+            }
+        }
+    }
 
     // Truncate title if it exceeds GitHub's limit
     const truncatedTitle = truncatePullRequestTitle(title.trim());
@@ -108,16 +126,61 @@ export const createPullRequest = async (
         logger.debug(`Pull request title truncated from ${title.trim().length} to ${truncatedTitle.length} characters to meet GitHub's 256-character limit`);
     }
 
-    const response = await octokit.pulls.create({
-        owner,
-        repo,
-        title: truncatedTitle,
-        body,
-        head,
-        base,
-    });
+    try {
+        const response = await octokit.pulls.create({
+            owner,
+            repo,
+            title: truncatedTitle,
+            body,
+            head,
+            base,
+        });
 
-    return response.data;
+        return response.data;
+    } catch (error: any) {
+        // Enhanced error handling for 422 errors
+        if (error.status === 422) {
+            const { PullRequestCreationError } = await import('./errors');
+
+            // Try to find existing PR to provide more helpful info
+            let existingPR: PullRequest | null = null;
+            try {
+                existingPR = await findOpenPullRequestByHeadRef(head);
+            } catch {
+                // Ignore errors finding existing PR
+            }
+
+            // If we found an existing PR that matches our target, reuse it instead of failing
+            if (existingPR && existingPR.base.ref === base) {
+                logger.info(`♻️  Found and reusing existing PR #${existingPR.number} (created after initial check)`);
+                logger.info(`   URL: ${existingPR.html_url}`);
+                logger.info(`   This can happen when PRs are created in parallel or from a previous failed run`);
+                return existingPR;
+            }
+
+            const prError = new PullRequestCreationError(
+                `Failed to create pull request: ${error.message}`,
+                422,
+                head,
+                base,
+                error.response?.data,
+                existingPR?.number,
+                existingPR?.html_url
+            );
+
+            // Log the detailed recovery instructions
+            const instructions = prError.getRecoveryInstructions();
+            for (const line of instructions.split('\n')) {
+                logger.error(line);
+            }
+            logger.error('');
+
+            throw prError;
+        }
+
+        // Re-throw other errors
+        throw error;
+    }
 };
 
 export const findOpenPullRequestByHeadRef = async (head: string): Promise<PullRequest | null> => {
