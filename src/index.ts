@@ -18,7 +18,7 @@ export type {
 } from './types';
 
 // Export errors
-export { CommandError, ArgumentError } from './errors';
+export { CommandError, ArgumentError, PullRequestCreationError, PullRequestCheckError } from './errors';
 
 // Export logger configuration
 export { setLogger, getLogger } from './logger';
