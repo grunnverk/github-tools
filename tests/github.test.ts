@@ -119,7 +119,7 @@ describe('GitHub Utilities', () => {
             mockRun.mockResolvedValue({ stdout: '  feature-branch  \n' });
             const branchName = await GitHub.getCurrentBranchName();
             expect(branchName).toBe('feature-branch');
-            expect(mockRun).toHaveBeenCalledWith('git rev-parse --abbrev-ref HEAD');
+            expect(mockRun).toHaveBeenCalledWith('git rev-parse --abbrev-ref HEAD', { cwd: undefined });
         });
 
         it('should handle git command errors', async () => {
@@ -144,6 +144,12 @@ describe('GitHub Utilities', () => {
             const branchName = await GitHub.getCurrentBranchName();
             expect(branchName).toBe('HEAD');
         });
+
+        it('should pass cwd to run if provided', async () => {
+            mockRun.mockResolvedValue({ stdout: 'main\n' });
+            await GitHub.getCurrentBranchName('/custom/path');
+            expect(mockRun).toHaveBeenCalledWith('git rev-parse --abbrev-ref HEAD', { cwd: '/custom/path' });
+        });
     });
 
     describe('getRepoDetails', () => {
@@ -151,6 +157,7 @@ describe('GitHub Utilities', () => {
             mockRun.mockResolvedValue({ stdout: 'https://github.com/owner/repo.git' });
             const details = await GitHub.getRepoDetails();
             expect(details).toEqual({ owner: 'owner', repo: 'repo' });
+            expect(mockRun).toHaveBeenCalledWith('git remote get-url origin', { cwd: undefined, suppressErrorLogging: true });
         });
 
         it('should parse owner and repo from an ssh git remote url', async () => {
@@ -194,6 +201,12 @@ describe('GitHub Utilities', () => {
             mockRun.mockResolvedValue({ stdout: '  https://github.com/owner/repo.git  \n\n' });
             const details = await GitHub.getRepoDetails();
             expect(details).toEqual({ owner: 'owner', repo: 'repo' });
+        });
+
+        it('should pass cwd to run if provided', async () => {
+            mockRun.mockResolvedValue({ stdout: 'https://github.com/owner/repo.git' });
+            await GitHub.getRepoDetails('/custom/path');
+            expect(mockRun).toHaveBeenCalledWith('git remote get-url origin', { cwd: '/custom/path', suppressErrorLogging: true });
         });
 
         it('should handle ssh URLs with custom ports', async () => {
@@ -418,6 +431,15 @@ describe('GitHub Utilities', () => {
                 head: 'test-owner:feature-branch',
             });
             expect(result).toBe(mockPR);
+            expect(mockRun).toHaveBeenCalledWith('git remote get-url origin', { cwd: undefined, suppressErrorLogging: true });
+        });
+
+        it('should pass cwd to getRepoDetails if provided', async () => {
+            const mockPR = { id: 1, title: 'Test PR' };
+            mockOctokit.pulls.list.mockResolvedValue({ data: [mockPR] });
+            await GitHub.findOpenPullRequestByHeadRef('feature-branch', '/custom/path');
+
+            expect(mockRun).toHaveBeenCalledWith('git remote get-url origin', { cwd: '/custom/path', suppressErrorLogging: true });
         });
 
         it('should return null if no pull request is found', async () => {
