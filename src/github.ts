@@ -35,39 +35,52 @@ export const getOctokit = (): Octokit => {
     });
 };
 
-export const getCurrentBranchName = async (): Promise<string> => {
-    const { stdout } = await run('git rev-parse --abbrev-ref HEAD');
+export const getCurrentBranchName = async (cwd?: string): Promise<string> => {
+    const { stdout } = await run('git rev-parse --abbrev-ref HEAD', { cwd });
     return stdout.trim();
 };
 
-export const getRepoDetails = async (): Promise<{ owner: string; repo: string }> => {
-    const { stdout } = await run('git remote get-url origin');
-    const url = stdout.trim();
+export const getRepoDetails = async (cwd?: string): Promise<{ owner: string; repo: string }> => {
+    try {
+        const { stdout } = await run('git remote get-url origin', { cwd, suppressErrorLogging: true });
+        const url = stdout.trim();
 
-    // Extract owner/repo from the URL - just look for the pattern owner/repo at the end
-    // Works with any hostname or SSH alias:
-    // - git@github.com:owner/repo.git
-    // - git@github.com-fjell:owner/repo.git
-    // - https://github.com/owner/repo.git
-    // - ssh://git@host/owner/repo.git
-    // Two cases:
-    // 1. SSH format: :owner/repo (after colon)
-    // 2. HTTPS format: //hostname/owner/repo (need at least 2 path segments)
-    const match = url.match(/(?::([^/:]+)\/([^/:]+)|\/\/[^/]+\/([^/:]+)\/([^/:]+))(?:\.git)?$/);
-    if (!match) {
-        throw new Error(`Could not parse repository owner and name from origin URL: "${url}". Expected format: git@host:owner/repo.git or https://host/owner/repo.git`);
+        // Extract owner/repo from the URL - just look for the pattern owner/repo at the end
+        // Works with any hostname or SSH alias:
+        // - git@github.com:owner/repo.git
+        // - git@github.com-fjell:owner/repo.git
+        // - https://github.com/owner/repo.git
+        // - ssh://git@host/owner/repo.git
+        // Two cases:
+        // 1. SSH format: :owner/repo (after colon)
+        // 2. HTTPS format: //hostname/owner/repo (need at least 2 path segments)
+        const match = url.match(/(?::([^/:]+)\/([^/:]+)|\/\/[^/]+\/([^/:]+)\/([^/:]+))(?:\.git)?$/);
+        if (!match) {
+            throw new Error(`Could not parse repository owner and name from origin URL: "${url}". Expected format: git@host:owner/repo.git or https://host/owner/repo.git`);
+        }
+
+        // Match groups: either [1,2] for SSH or [3,4] for HTTPS
+        const owner = match[1] || match[3];
+        let repo = match[2] || match[4];
+
+        // Strip .git extension if present
+        if (repo.endsWith('.git')) {
+            repo = repo.slice(0, -4);
+        }
+
+        return { owner, repo };
+    } catch (error: any) {
+        const logger = getLogger();
+        const isNotGitRepo = error.message.includes('not a git repository');
+        const hasNoOrigin = error.message.includes('remote origin does not exist');
+
+        if (isNotGitRepo || hasNoOrigin) {
+            logger.debug(`Failed to get repository details (expected): ${error.message} (${cwd || process.cwd()})`);
+        } else {
+            logger.debug(`Failed to get repository details: ${error.message}`);
+        }
+        throw error;
     }
-
-    // Match groups: either [1,2] for SSH or [3,4] for HTTPS
-    const owner = match[1] || match[3];
-    let repo = match[2] || match[4];
-
-    // Strip .git extension if present
-    if (repo.endsWith('.git')) {
-        repo = repo.slice(0, -4);
-    }
-
-    return { owner, repo };
 };
 
 // GitHub API limit for pull request titles
@@ -96,16 +109,16 @@ export const createPullRequest = async (
     body: string,
     head: string,
     base: string = 'main',
-    options: { reuseExisting?: boolean } = {}
+    options: { reuseExisting?: boolean; cwd?: string } = {}
 ): Promise<PullRequest> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(options.cwd);
     const logger = getLogger();
 
     // Check if PR already exists (pre-flight check)
     if (options.reuseExisting !== false) {
         logger.debug(`Checking for existing PR with head: ${head}`);
-        const existingPR = await findOpenPullRequestByHeadRef(head);
+        const existingPR = await findOpenPullRequestByHeadRef(head, options.cwd);
 
         if (existingPR) {
             if (existingPR.base.ref === base) {
@@ -183,12 +196,12 @@ export const createPullRequest = async (
     }
 };
 
-export const findOpenPullRequestByHeadRef = async (head: string): Promise<PullRequest | null> => {
+export const findOpenPullRequestByHeadRef = async (head: string, cwd?: string): Promise<PullRequest | null> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
     const logger = getLogger();
 
     try {
+        const { owner, repo } = await getRepoDetails(cwd);
         logger.debug(`Searching for open pull requests with head: ${owner}:${head} in ${owner}/${repo}`);
 
         const response = await octokit.pulls.list({
@@ -201,9 +214,15 @@ export const findOpenPullRequestByHeadRef = async (head: string): Promise<PullRe
         logger.debug(`Found ${response.data.length} open pull requests`);
         return (response.data[0] ?? null) as PullRequest | null;
     } catch (error: any) {
-        logger.error(`Failed to find open pull requests: ${error.message}`);
+        // Only log error if it's NOT a "not a git repository" error which we already logged at debug
+        if (!error.message.includes('not a git repository')) {
+            logger.error(`Failed to find open pull requests: ${error.message}`);
+        } else {
+            logger.debug(`Skipping PR search: not a git repository (${cwd || process.cwd()})`);
+        }
+
         if (error.status === 404) {
-            logger.error(`Repository ${owner}/${repo} not found or access denied. Please check your GITHUB_TOKEN permissions.`);
+            logger.error(`Repository not found or access denied. Please check your GITHUB_TOKEN permissions.`);
         }
         throw error;
     }
@@ -212,9 +231,9 @@ export const findOpenPullRequestByHeadRef = async (head: string): Promise<PullRe
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Check if repository has GitHub Actions workflows configured
-const hasWorkflowsConfigured = async (): Promise<boolean> => {
+const hasWorkflowsConfigured = async (cwd?: string): Promise<boolean> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
 
     try {
         const response = await octokit.actions.listRepoWorkflows({
@@ -234,7 +253,7 @@ const hasWorkflowsConfigured = async (): Promise<boolean> => {
  * Check if workflows are configured and would be triggered for PRs to the target branch
  * Returns detailed information about workflow configuration
  */
-export const checkWorkflowConfiguration = async (targetBranch: string = 'main'): Promise<{
+export const checkWorkflowConfiguration = async (targetBranch: string = 'main', cwd?: string): Promise<{
     hasWorkflows: boolean;
     workflowCount: number;
     hasPullRequestTriggers: boolean;
@@ -242,7 +261,7 @@ export const checkWorkflowConfiguration = async (targetBranch: string = 'main'):
     warning?: string;
 }> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -382,9 +401,9 @@ const isTriggeredByPullRequest = (workflowContent: string, targetBranch: string,
  * Check if any workflow runs have been triggered for a specific PR
  * This is more specific than hasWorkflowsConfigured as it checks for actual runs
  */
-const hasWorkflowRunsForPR = async (prNumber: number): Promise<boolean> => {
+const hasWorkflowRunsForPR = async (prNumber: number, cwd?: string): Promise<boolean> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -438,9 +457,9 @@ const hasWorkflowRunsForPR = async (prNumber: number): Promise<boolean> => {
     }
 };
 
-export const waitForPullRequestChecks = async (prNumber: number, options: { timeout?: number; skipUserConfirmation?: boolean } = {}): Promise<void> => {
+export const waitForPullRequestChecks = async (prNumber: number, options: { timeout?: number; skipUserConfirmation?: boolean; cwd?: string } = {}): Promise<void> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(options.cwd);
     const logger = getLogger();
     const timeout = options.timeout || 3600000; // 1 hour default timeout
     const skipUserConfirmation = options.skipUserConfirmation || false;
@@ -497,7 +516,7 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
             if (consecutiveNoChecksCount >= maxConsecutiveNoChecks) {
                 logger.info(`No checks detected for ${maxConsecutiveNoChecks} consecutive attempts. Checking repository configuration...`);
 
-                const hasWorkflows = await hasWorkflowsConfigured();
+                const hasWorkflows = await hasWorkflowsConfigured(options.cwd);
 
                 if (!hasWorkflows) {
                     logger.warn(`No GitHub Actions workflows found in repository ${owner}/${repo}.`);
@@ -526,7 +545,7 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
                         logger.info('GitHub Actions workflows are configured. Checking if any workflows are triggered for this PR...');
 
                         // First check if workflow runs exist at all for this PR's branch/SHA
-                        const hasRunsForPR = await hasWorkflowRunsForPR(prNumber);
+                        const hasRunsForPR = await hasWorkflowRunsForPR(prNumber, options.cwd);
                         checkedWorkflowRuns = true; // Mark that we've checked
 
                         if (!hasRunsForPR) {
@@ -610,12 +629,13 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
         // Reset the no-checks counter since we found some checks
         consecutiveNoChecksCount = 0;
 
+        // ... rest of the while loop logic ...
         const failingChecks = checkRuns.filter(
             (cr) => cr.conclusion && ['failure', 'timed_out', 'cancelled'].includes(cr.conclusion)
         );
 
         if (failingChecks.length > 0) {
-            const { owner, repo } = await getRepoDetails();
+            const { owner, repo } = await getRepoDetails(options.cwd);
             const prUrl = `https://github.com/${owner}/${repo}/pull/${prNumber}`;
 
             // Collect detailed information about each failed check
@@ -717,10 +737,11 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
 export const mergePullRequest = async (
     prNumber: number,
     mergeMethod: MergeMethod = 'squash',
-    deleteBranch: boolean = true
+    deleteBranch: boolean = true,
+    cwd?: string
 ): Promise<void> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     logger.info(`Merging PR #${prNumber} using ${mergeMethod} method...`);
@@ -752,9 +773,9 @@ export const mergePullRequest = async (
     }
 };
 
-export const createRelease = async (tagName: string, title: string, notes: string): Promise<void> => {
+export const createRelease = async (tagName: string, title: string, notes: string, cwd?: string): Promise<void> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     logger.info(`Creating release for tag ${tagName}...`);
@@ -768,9 +789,9 @@ export const createRelease = async (tagName: string, title: string, notes: strin
     logger.info(`Release ${tagName} created.`);
 };
 
-export const getReleaseByTagName = async (tagName: string): Promise<any> => {
+export const getReleaseByTagName = async (tagName: string, cwd?: string): Promise<any> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -788,9 +809,9 @@ export const getReleaseByTagName = async (tagName: string): Promise<any> => {
     }
 };
 
-export const getOpenIssues = async (limit: number = 20): Promise<string> => {
+export const getOpenIssues = async (limit: number = 20, cwd?: string): Promise<string> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -838,10 +859,11 @@ export const getOpenIssues = async (limit: number = 20): Promise<string> => {
 export const createIssue = async (
     title: string,
     body: string,
-    labels?: string[]
+    labels?: string[],
+    cwd?: string
 ): Promise<{ number: number; html_url: string }> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
 
     const response = await octokit.issues.create({
         owner,
@@ -857,9 +879,9 @@ export const createIssue = async (
     };
 };
 
-export const getWorkflowRunsTriggeredByRelease = async (tagName: string, workflowNames?: string[]): Promise<any[]> => {
+export const getWorkflowRunsTriggeredByRelease = async (tagName: string, workflowNames?: string[], cwd?: string): Promise<any[]> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -871,7 +893,7 @@ export const getWorkflowRunsTriggeredByRelease = async (tagName: string, workflo
         let releaseCommitSha: string | undefined;
 
         try {
-            releaseInfo = await getReleaseByTagName(tagName);
+            releaseInfo = await getReleaseByTagName(tagName, cwd);
             releaseCreatedAt = releaseInfo?.created_at;
             releaseCommitSha = releaseInfo?.target_commitish;
         } catch (error: any) {
@@ -983,6 +1005,7 @@ export const waitForReleaseWorkflows = async (
         timeout?: number;
         workflowNames?: string[];
         skipUserConfirmation?: boolean;
+        cwd?: string;
     } = {}
 ): Promise<void> => {
     const logger = getLogger();
@@ -1026,7 +1049,7 @@ export const waitForReleaseWorkflows = async (
         }
 
         // Get current workflow runs
-        workflowRuns = await getWorkflowRunsTriggeredByRelease(tagName, options.workflowNames);
+        workflowRuns = await getWorkflowRunsTriggeredByRelease(tagName, options.workflowNames, options.cwd);
 
         if (workflowRuns.length === 0) {
             consecutiveNoWorkflowsCount++;
@@ -1120,9 +1143,9 @@ export const waitForReleaseWorkflows = async (
     }
 };
 
-export const getWorkflowsTriggeredByRelease = async (): Promise<string[]> => {
+export const getWorkflowsTriggeredByRelease = async (cwd?: string): Promise<string[]> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1218,9 +1241,9 @@ const isTriggeredByRelease = (workflowContent: string, workflowName: string): bo
 
 // Milestone Management Functions
 
-export const findMilestoneByTitle = async (title: string): Promise<any | null> => {
+export const findMilestoneByTitle = async (title: string, cwd?: string): Promise<any | null> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1248,9 +1271,9 @@ export const findMilestoneByTitle = async (title: string): Promise<any | null> =
     }
 };
 
-export const createMilestone = async (title: string, description?: string): Promise<any> => {
+export const createMilestone = async (title: string, description?: string, cwd?: string): Promise<any> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1271,9 +1294,9 @@ export const createMilestone = async (title: string, description?: string): Prom
     }
 };
 
-export const closeMilestone = async (milestoneNumber: number): Promise<void> => {
+export const closeMilestone = async (milestoneNumber: number, cwd?: string): Promise<void> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1293,9 +1316,9 @@ export const closeMilestone = async (milestoneNumber: number): Promise<void> => 
     }
 };
 
-export const getOpenIssuesForMilestone = async (milestoneNumber: number): Promise<any[]> => {
+export const getOpenIssuesForMilestone = async (milestoneNumber: number, cwd?: string): Promise<any[]> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1319,9 +1342,9 @@ export const getOpenIssuesForMilestone = async (milestoneNumber: number): Promis
     }
 };
 
-export const moveIssueToMilestone = async (issueNumber: number, milestoneNumber: number): Promise<void> => {
+export const moveIssueToMilestone = async (issueNumber: number, milestoneNumber: number, cwd?: string): Promise<void> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1341,11 +1364,11 @@ export const moveIssueToMilestone = async (issueNumber: number, milestoneNumber:
     }
 };
 
-export const moveOpenIssuesToNewMilestone = async (fromMilestoneNumber: number, toMilestoneNumber: number): Promise<number> => {
+export const moveOpenIssuesToNewMilestone = async (fromMilestoneNumber: number, toMilestoneNumber: number, cwd?: string): Promise<number> => {
     const logger = getLogger();
 
     try {
-        const openIssues = await getOpenIssuesForMilestone(fromMilestoneNumber);
+        const openIssues = await getOpenIssuesForMilestone(fromMilestoneNumber, cwd);
 
         if (openIssues.length === 0) {
             logger.debug(`No open issues to move from milestone #${fromMilestoneNumber}`);
@@ -1355,7 +1378,7 @@ export const moveOpenIssuesToNewMilestone = async (fromMilestoneNumber: number, 
         logger.info(`Moving ${openIssues.length} open issues from milestone #${fromMilestoneNumber} to #${toMilestoneNumber}`);
 
         for (const issue of openIssues) {
-            await moveIssueToMilestone(issue.number, toMilestoneNumber);
+            await moveIssueToMilestone(issue.number, toMilestoneNumber, cwd);
         }
 
         logger.info(`✅ Moved ${openIssues.length} issues to new milestone`);
@@ -1366,7 +1389,7 @@ export const moveOpenIssuesToNewMilestone = async (fromMilestoneNumber: number, 
     }
 };
 
-export const ensureMilestoneForVersion = async (version: string, fromVersion?: string): Promise<void> => {
+export const ensureMilestoneForVersion = async (version: string, fromVersion?: string, cwd?: string): Promise<void> => {
     const logger = getLogger();
 
     try {
@@ -1374,7 +1397,7 @@ export const ensureMilestoneForVersion = async (version: string, fromVersion?: s
         logger.debug(`Ensuring milestone exists: ${milestoneTitle}`);
 
         // Check if milestone already exists
-        let milestone = await findMilestoneByTitle(milestoneTitle);
+        let milestone = await findMilestoneByTitle(milestoneTitle, cwd);
 
         if (milestone) {
             logger.info(`✅ Milestone already exists: ${milestoneTitle}`);
@@ -1382,15 +1405,15 @@ export const ensureMilestoneForVersion = async (version: string, fromVersion?: s
         }
 
         // Create new milestone
-        milestone = await createMilestone(milestoneTitle, `Release ${version}`);
+        milestone = await createMilestone(milestoneTitle, `Release ${version}`, cwd);
 
         // If we have a previous version, move open issues from its milestone
         if (fromVersion) {
             const previousMilestoneTitle = `release/${fromVersion}`;
-            const previousMilestone = await findMilestoneByTitle(previousMilestoneTitle);
+            const previousMilestone = await findMilestoneByTitle(previousMilestoneTitle, cwd);
 
             if (previousMilestone && previousMilestone.state === 'closed') {
-                const movedCount = await moveOpenIssuesToNewMilestone(previousMilestone.number, milestone.number);
+                const movedCount = await moveOpenIssuesToNewMilestone(previousMilestone.number, milestone.number, cwd);
                 if (movedCount > 0) {
                     logger.info(`📋 Moved ${movedCount} open issues from ${previousMilestoneTitle} to ${milestoneTitle}`);
                 }
@@ -1402,14 +1425,14 @@ export const ensureMilestoneForVersion = async (version: string, fromVersion?: s
     }
 };
 
-export const closeMilestoneForVersion = async (version: string): Promise<void> => {
+export const closeMilestoneForVersion = async (version: string, cwd?: string): Promise<void> => {
     const logger = getLogger();
 
     try {
         const milestoneTitle = `release/${version}`;
         logger.debug(`Closing milestone: ${milestoneTitle}`);
 
-        const milestone = await findMilestoneByTitle(milestoneTitle);
+        const milestone = await findMilestoneByTitle(milestoneTitle, cwd);
 
         if (!milestone) {
             logger.debug(`Milestone not found: ${milestoneTitle}`);
@@ -1421,7 +1444,7 @@ export const closeMilestoneForVersion = async (version: string): Promise<void> =
             return;
         }
 
-        await closeMilestone(milestone.number);
+        await closeMilestone(milestone.number, cwd);
         logger.info(`🏁 Closed milestone: ${milestoneTitle}`);
     } catch (error: any) {
         // Don't fail the whole operation if milestone management fails
@@ -1429,9 +1452,9 @@ export const closeMilestoneForVersion = async (version: string): Promise<void> =
     }
 };
 
-export const getClosedIssuesForMilestone = async (milestoneNumber: number, limit: number = 50): Promise<any[]> => {
+export const getClosedIssuesForMilestone = async (milestoneNumber: number, limit: number = 50, cwd?: string): Promise<any[]> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1461,9 +1484,9 @@ export const getClosedIssuesForMilestone = async (milestoneNumber: number, limit
     }
 };
 
-export const getIssueDetails = async (issueNumber: number, maxTokens: number = 20000): Promise<any> => {
+export const getIssueDetails = async (issueNumber: number, maxTokens: number = 20000, cwd?: string): Promise<any> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1535,7 +1558,7 @@ export const getIssueDetails = async (issueNumber: number, maxTokens: number = 2
     }
 };
 
-export const getMilestoneIssuesForRelease = async (versions: string[], maxTotalTokens: number = 50000): Promise<string> => {
+export const getMilestoneIssuesForRelease = async (versions: string[], maxTotalTokens: number = 50000, cwd?: string): Promise<string> => {
     const logger = getLogger();
 
     try {
@@ -1546,14 +1569,14 @@ export const getMilestoneIssuesForRelease = async (versions: string[], maxTotalT
             const milestoneTitle = `release/${version}`;
             logger.debug(`Looking for milestone: ${milestoneTitle}`);
 
-            const milestone = await findMilestoneByTitle(milestoneTitle);
+            const milestone = await findMilestoneByTitle(milestoneTitle, cwd);
 
             if (!milestone) {
                 logger.debug(`Milestone not found: ${milestoneTitle}`);
                 continue;
             }
 
-            const issues = await getClosedIssuesForMilestone(milestone.number);
+            const issues = await getClosedIssuesForMilestone(milestone.number, 50, cwd);
             if (issues.length > 0) {
                 allIssues.push(...issues.map(issue => ({ ...issue, version })));
                 processedVersions.push(version);
@@ -1582,7 +1605,7 @@ export const getMilestoneIssuesForRelease = async (versions: string[], maxTotalT
 
         for (const issue of allIssues) {
             // Get detailed issue content with individual token limit
-            const issueDetails = await getIssueDetails(issue.number, 20000);
+            const issueDetails = await getIssueDetails(issue.number, 20000, cwd);
 
             // Create issue section
             let issueSection = `### #${issue.number}: ${issueDetails.title}\n\n`;
@@ -1637,9 +1660,9 @@ export const getMilestoneIssuesForRelease = async (versions: string[], maxTotalT
  * Get recently closed GitHub issues for commit message context.
  * Prioritizes issues from milestones that match the current version.
  */
-export const getRecentClosedIssuesForCommit = async (currentVersion?: string, limit: number = 10): Promise<string> => {
+export const getRecentClosedIssuesForCommit = async (currentVersion?: string, limit: number = 10, cwd?: string): Promise<string> => {
     const octokit = getOctokit();
-    const { owner, repo } = await getRepoDetails();
+    const { owner, repo } = await getRepoDetails(cwd);
     const logger = getLogger();
 
     try {
@@ -1674,7 +1697,7 @@ export const getRecentClosedIssuesForCommit = async (currentVersion?: string, li
                 : currentVersion;
 
             const milestoneTitle = `release/${baseVersion}`;
-            relevantMilestone = await findMilestoneByTitle(milestoneTitle);
+            relevantMilestone = await findMilestoneByTitle(milestoneTitle, cwd);
 
             if (relevantMilestone) {
                 logger.debug(`Found relevant milestone: ${milestoneTitle}`);
