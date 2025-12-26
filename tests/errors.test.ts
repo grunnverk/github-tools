@@ -1,5 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { PullRequestCreationError, PullRequestCheckError } from '../src/errors';
+import { PullRequestCreationError, PullRequestCheckError, CommandError, ArgumentError } from '../src/errors';
+
+describe('CommandError', () => {
+    it('should create an error with correct properties', () => {
+        const error = new CommandError('Command failed');
+        expect(error.message).toBe('Command failed');
+        expect(error.name).toBe('CommandError');
+        expect(error instanceof Error).toBe(true);
+    });
+
+    it('should set correct error name', () => {
+        const error = new CommandError('Test message');
+        expect(error.name).toBe('CommandError');
+    });
+});
+
+describe('ArgumentError', () => {
+    it('should create an error with correct properties', () => {
+        const error = new ArgumentError('Invalid argument');
+        expect(error.message).toBe('Invalid argument');
+        expect(error.name).toBe('ArgumentError');
+        expect(error instanceof Error).toBe(true);
+    });
+
+    it('should set correct error name', () => {
+        const error = new ArgumentError('Test message');
+        expect(error.name).toBe('ArgumentError');
+    });
+});
 
 describe('PullRequestCreationError', () => {
     describe('422 errors', () => {

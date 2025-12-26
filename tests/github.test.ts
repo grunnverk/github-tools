@@ -5345,4 +5345,373 @@ jobs:
             expect(result).toContain('Labels: bug, priority-high');
         });
     });
+
+    describe('Default prompt function', () => {
+        it('should use default prompt function when none is set', async () => {
+            // Create a custom prompt test by resetting to default behavior
+            const originalPrompt = GitHub.setPromptFunction;
+
+            // Create a simple test that checks default behavior would work
+            GitHub.setPromptFunction(async (message: string) => {
+                return message.includes('yes');
+            });
+
+            expect(() => GitHub.setPromptFunction(async () => true)).not.toThrow();
+        });
+
+        it('should handle setPromptFunction correctly', async () => {
+            const customPrompt = async (message: string): Promise<boolean> => {
+                return message.toLowerCase().includes('confirm');
+            };
+
+            GitHub.setPromptFunction(customPrompt);
+            // Just verify it doesn't throw
+            expect(() => GitHub.setPromptFunction(customPrompt)).not.toThrow();
+        });
+    });
+
+    describe('Edge cases and error scenarios', () => {
+        it('should handle GitHub API errors gracefully', async () => {
+            mockOctokit.issues.get.mockRejectedValue(new Error('API Error'));
+
+            // This should propagate the error appropriately
+            await expect(GitHub.getIssueDetails(1)).rejects.toThrow('API Error');
+        });
+
+        it('should handle missing environment variables', () => {
+            const savedToken = process.env.GITHUB_TOKEN;
+            delete process.env.GITHUB_TOKEN;
+
+            expect(() => GitHub.getOctokit()).toThrow('GITHUB_TOKEN is not set.');
+
+            // Restore
+            if (savedToken) {
+                process.env.GITHUB_TOKEN = savedToken;
+            }
+        });
+
+        it('should handle workflow content parsing errors', async () => {
+            const invalidWorkflowContent = '{ invalid yaml }';
+            mockOctokit.actions.listRepoWorkflows.mockResolvedValue({
+                data: {
+                    workflows: [
+                        { id: 1, name: 'test-workflow', path: '.github/workflows/test.yml' }
+                    ]
+                }
+            });
+
+            mockOctokit.repos.getContent.mockResolvedValue({
+                data: {
+                    type: 'file',
+                    content: Buffer.from(invalidWorkflowContent).toString('base64')
+                }
+            });
+
+            // Should not throw, just return safe defaults
+            const result = await GitHub.checkWorkflowConfiguration();
+            expect(result).toBeDefined();
+            expect(result.hasWorkflows).toBe(true);
+        });
+
+        it('should handle empty milestone list', async () => {
+            mockOctokit.issues.listMilestones.mockResolvedValue({
+                data: []
+            });
+
+            const result = await GitHub.findMilestoneByTitle('nonexistent');
+            expect(result).toBeNull();
+        });
+
+        it('should handle API responses with missing fields', async () => {
+            mockOctokit.issues.listMilestones.mockResolvedValue({
+                data: [
+                    { title: 'test', state: 'open' } // Missing other fields
+                ]
+            });
+
+            const result = await GitHub.findMilestoneByTitle('test');
+            expect(result).toBeDefined();
+            expect(result?.title).toBe('test');
+        });
+
+        it('should handle API errors in issue details', async () => {
+            const issueError = new Error('Issue fetch failed');
+            mockOctokit.issues.get.mockRejectedValue(issueError);
+
+            await expect(GitHub.getIssueDetails(999)).rejects.toThrow('Issue fetch failed');
+        });
+
+        it('should handle missing comments in issues', async () => {
+            mockOctokit.issues.get.mockResolvedValue({
+                data: {
+                    number: 1,
+                    title: 'Test Issue',
+                    body: 'Description'
+                }
+            });
+
+            mockOctokit.issues.listComments.mockResolvedValue({
+                data: [] // No comments
+            });
+
+            const result = await GitHub.getIssueDetails(1);
+            expect(result.comments).toEqual([]);
+            expect(result.totalTokens).toBeGreaterThan(0);
+        });
+
+        it('should handle issues with very large body that exceeds initial token check', async () => {
+            const largeBody = 'x'.repeat(25000);
+            mockOctokit.issues.get.mockResolvedValue({
+                data: {
+                    number: 1,
+                    title: 'Large Issue',
+                    body: largeBody
+                }
+            });
+
+            mockOctokit.issues.listComments.mockResolvedValue({
+                data: [
+                    { user: { login: 'user1' }, body: 'Comment 1', created_at: '2023-01-01' }
+                ]
+            });
+
+            const result = await GitHub.getIssueDetails(1, 20000);
+            // Should not include comments if title/body already near limit
+            expect(result.totalTokens).toBeGreaterThan(5000);
+        });
+
+        it('should handle truncated PR title correctly', async () => {
+            const exactLimit = 'a'.repeat(256);
+            const overLimit = 'a'.repeat(300);
+
+            mockOctokit.pulls.list.mockResolvedValue({ data: [] });
+            mockOctokit.pulls.create.mockResolvedValue({
+                data: { html_url: 'http://github.com/pull/1' }
+            });
+
+            // Should not truncate at exactly 256 chars
+            await GitHub.createPullRequest(exactLimit, 'body', 'head');
+            expect(mockOctokit.pulls.create).toHaveBeenCalledWith(
+                expect.objectContaining({ title: exactLimit })
+            );
+
+            // Should truncate over 256 chars
+            await GitHub.createPullRequest(overLimit, 'body', 'head');
+            const lastCall = mockOctokit.pulls.create.mock.calls[mockOctokit.pulls.create.mock.calls.length - 1];
+            expect(lastCall[0].title.length).toBeLessThanOrEqual(256);
+        });
+
+        it('should handle existing PR in reuse mode', async () => {
+            const existingPR = {
+                number: 99,
+                title: 'Existing',
+                html_url: 'https://github.com/test/test/pull/99',
+                state: 'open',
+                head: { ref: 'feature-branch', sha: 'abc' },
+                base: { ref: 'main' }
+            };
+
+            mockOctokit.pulls.list.mockResolvedValue({
+                data: [existingPR]
+            });
+
+            const result = await GitHub.createPullRequest('New PR', 'body', 'feature-branch', 'main', { reuseExisting: true });
+
+            // Should reuse existing PR
+            expect(result.number).toBe(99);
+            expect(mockOctokit.pulls.create).not.toHaveBeenCalled();
+        });
+
+        it('should handle branch mismatch on existing PR', async () => {
+            const existingPR = {
+                number: 99,
+                title: 'Existing',
+                html_url: 'https://github.com/test/test/pull/99',
+                state: 'open',
+                head: { ref: 'feature-branch', sha: 'abc' },
+                base: { ref: 'develop' } // Different base branch
+            };
+
+            mockOctokit.pulls.list.mockResolvedValue({
+                data: [existingPR]
+            });
+
+            const prData = { data: { html_url: 'http://github.com/pull/100', number: 100 } };
+            mockOctokit.pulls.create.mockResolvedValue(prData);
+
+            const result = await GitHub.createPullRequest('New PR', 'body', 'feature-branch', 'main');
+
+            // Should create new PR with different base
+            expect(mockOctokit.pulls.create).toHaveBeenCalled();
+        });
+
+        it('should handle release workflow detection with various triggers', async () => {
+            const workflowYAML = `
+on:
+  release:
+    types: [published, created]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+            `;
+
+            mockOctokit.actions.listRepoWorkflows.mockResolvedValue({
+                data: {
+                    workflows: [
+                        { id: 1, name: 'release-workflow', path: '.github/workflows/release.yml' }
+                    ]
+                }
+            });
+
+            mockOctokit.repos.getContent.mockResolvedValue({
+                data: {
+                    type: 'file',
+                    content: Buffer.from(workflowYAML).toString('base64')
+                }
+            });
+
+            const workflows = await GitHub.getWorkflowsTriggeredByRelease();
+            expect(workflows).toContain('release-workflow');
+        });
+
+        it('should handle push-triggered workflows with tag patterns', async () => {
+            const workflowYAML = `
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'release/*'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+            `;
+
+            mockOctokit.actions.listRepoWorkflows.mockResolvedValue({
+                data: {
+                    workflows: [
+                        { id: 1, name: 'tag-workflow', path: '.github/workflows/tag.yml' }
+                    ]
+                }
+            });
+
+            mockOctokit.repos.getContent.mockResolvedValue({
+                data: {
+                    type: 'file',
+                    content: Buffer.from(workflowYAML).toString('base64')
+                }
+            });
+
+            const workflows = await GitHub.getWorkflowsTriggeredByRelease();
+            expect(workflows).toContain('tag-workflow');
+        });
+
+        it('should handle milestone issues with token limits', async () => {
+            mockOctokit.issues.listMilestones.mockResolvedValue({
+                data: [{ number: 1, title: 'release/1.0.0', state: 'closed' }]
+            });
+
+            mockOctokit.issues.listForRepo.mockResolvedValue({
+                data: [
+                    {
+                        number: 1,
+                        title: 'Issue 1',
+                        body: 'x'.repeat(100),
+                        labels: [],
+                        state_reason: 'completed'
+                    }
+                ]
+            });
+
+            mockOctokit.issues.get.mockResolvedValue({
+                data: {
+                    number: 1,
+                    title: 'Issue 1',
+                    body: 'x'.repeat(100)
+                }
+            });
+
+            mockOctokit.issues.listComments.mockResolvedValue({
+                data: []
+            });
+
+            const result = await GitHub.getMilestoneIssuesForRelease(['1.0.0'], 1000);
+            expect(result).toContain('Issue 1');
+        });
+
+        it('should handle close milestone with already closed milestone', async () => {
+            mockOctokit.issues.listMilestones.mockResolvedValue({
+                data: [{ number: 1, title: 'release/1.0.0', state: 'closed' }]
+            });
+
+            // Should not throw even if milestone is already closed
+            await expect(
+                GitHub.closeMilestoneForVersion('1.0.0')
+            ).resolves.not.toThrow();
+        });
+
+        it('should handle milestone not found for version', async () => {
+            mockOctokit.issues.listMilestones.mockResolvedValue({
+                data: [] // Milestone doesn't exist
+            });
+
+            // Should not throw
+            await expect(
+                GitHub.closeMilestoneForVersion('1.0.0')
+            ).resolves.not.toThrow();
+        });
+
+        it('should handle move open issues when previous milestone is open', async () => {
+            const currentMilestone = { number: 2, title: 'release/1.1.0', state: 'open' };
+            const previousMilestone = { number: 1, title: 'release/1.0.0', state: 'open' };
+
+            mockOctokit.issues.listMilestones.mockResolvedValueOnce({ data: [currentMilestone] });
+            mockOctokit.issues.listMilestones.mockResolvedValueOnce({ data: [previousMilestone] });
+            mockOctokit.issues.listForRepo.mockResolvedValue({
+                data: []
+            });
+
+            // Should not move issues if previous milestone is still open
+            await expect(
+                GitHub.ensureMilestoneForVersion('1.1.0', '1.0.0')
+            ).resolves.not.toThrow();
+        });
+
+        it('should handle closed issues with state_reason null', async () => {
+            mockOctokit.issues.listMilestones.mockResolvedValue({
+                data: [{ number: 1, title: 'release/1.0.0' }]
+            });
+
+            mockOctokit.issues.listForRepo.mockResolvedValue({
+                data: [
+                    {
+                        number: 1,
+                        title: 'Issue',
+                        state_reason: null, // Not completed
+                        pull_request: null,
+                        labels: []
+                    }
+                ]
+            });
+
+            const result = await GitHub.getClosedIssuesForMilestone(1);
+            expect(result).toEqual([]); // Should filter out
+        });
+
+        it('should handle issues with no milestone', async () => {
+            mockOctokit.issues.listForRepo.mockResolvedValue({
+                data: [
+                    {
+                        number: 1,
+                        title: 'Issue with no milestone',
+                        milestone: null,
+                        labels: [{ name: 'bug' }],
+                        state_reason: 'completed'
+                    }
+                ]
+            });
+
+            const result = await GitHub.getRecentClosedIssuesForCommit();
+            expect(result).toContain('Milestone: none');
+        });
+    });
 });

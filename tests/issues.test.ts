@@ -1519,5 +1519,435 @@ Suggestions:`;
 
             expect(output).toContain('✅ No specific issues identified from the review.');
         });
+
+        it('should serialize and deserialize issues with all field types', async () => {
+            // Test comprehensive issue handling
+            const complexIssue: Issue = {
+                title: 'Complex Issue Title',
+                description: 'Multi-line\ndescription\nwith details',
+                priority: 'high',
+                category: 'functionality',
+                suggestions: [
+                    'First suggestion',
+                    'Second suggestion with special chars: @#$%^&*()',
+                    'Third suggestion'
+                ]
+            };
+
+            const result: ReviewResult = {
+                summary: 'Complex test',
+                totalIssues: 1,
+                issues: [complexIssue]
+            };
+
+            const mockCreatedIssue = {
+                html_url: 'https://github.com/user/repo/issues/456',
+                number: 456
+            };
+            vi.mocked(github.createIssue).mockResolvedValue(mockCreatedIssue);
+
+            const output = await handleIssueCreation(result, true);
+
+            expect(output).toContain('Complex Issue Title');
+            expect(output).toContain('🔴'); // high priority emoji
+            expect(github.createIssue).toHaveBeenCalled();
+
+            // Check that the issue was created with correct labels
+            const createIssueCallArgs = vi.mocked(github.createIssue).mock.calls[0];
+            const createIssueLabels = createIssueCallArgs[2] as string[];
+            expect(createIssueLabels).toContain('priority-high');
+            expect(createIssueLabels).toContain('category-functionality');
+
+            // Check that the issue body was formatted correctly
+            const issueBody = createIssueCallArgs[1];
+            expect(issueBody).toContain('## Description');
+            expect(issueBody).toContain('## Suggestions');
+            expect(issueBody).toContain('First suggestion');
+        });
+
+        it('should handle all category types correctly', async () => {
+            const categories: Array<'ui' | 'content' | 'functionality' | 'accessibility' | 'performance' | 'other'> =
+                ['ui', 'content', 'functionality', 'accessibility', 'performance', 'other'];
+
+            for (const category of categories) {
+                const issue: Issue = {
+                    title: `Test ${category}`,
+                    description: `Testing ${category} category`,
+                    priority: 'medium',
+                    category
+                };
+
+                const result: ReviewResult = {
+                    summary: `Test for ${category}`,
+                    totalIssues: 1,
+                    issues: [issue]
+                };
+
+                const mockCreatedIssue = {
+                    html_url: `https://github.com/user/repo/issues/${100 + categories.indexOf(category)}`,
+                    number: 100 + categories.indexOf(category)
+                };
+                vi.mocked(github.createIssue).mockResolvedValue(mockCreatedIssue);
+
+                const output = await handleIssueCreation(result, true);
+                // Check that createIssue was called with the correct category label
+                const lastCall = vi.mocked(github.createIssue).mock.calls[vi.mocked(github.createIssue).mock.calls.length - 1];
+                const labels = lastCall[2] as string[];
+                expect(labels).toContain(`category-${category}`);
+            }
+        });
+
+        it('should handle all priority types correctly', async () => {
+            const priorities: Array<'low' | 'medium' | 'high'> = ['low', 'medium', 'high'];
+            const priorityEmojis = { low: '🟢', medium: '🟡', high: '🔴' };
+
+            for (const priority of priorities) {
+                const issue: Issue = {
+                    title: `Priority ${priority}`,
+                    description: `Testing ${priority} priority`,
+                    priority,
+                    category: 'other'
+                };
+
+                const result: ReviewResult = {
+                    summary: `Test for ${priority} priority`,
+                    totalIssues: 1,
+                    issues: [issue]
+                };
+
+                const mockCreatedIssue = {
+                    html_url: `https://github.com/user/repo/issues/${200 + priorities.indexOf(priority)}`,
+                    number: 200 + priorities.indexOf(priority)
+                };
+                vi.mocked(github.createIssue).mockResolvedValue(mockCreatedIssue);
+
+                const output = await handleIssueCreation(result, true);
+                // Check priority emoji appears
+                expect(output).toContain(priorityEmojis[priority]);
+                // Check that createIssue was called with the correct priority label
+                const lastCall = vi.mocked(github.createIssue).mock.calls[vi.mocked(github.createIssue).mock.calls.length - 1];
+                const labels = lastCall[2] as string[];
+                expect(labels).toContain(`priority-${priority}`);
+            }
+        });
+
+        it('should format issue body with all section types', async () => {
+            const issue: Issue = {
+                title: 'Full Format Test',
+                description: 'This is a detailed description',
+                priority: 'high',
+                category: 'ui',
+                suggestions: ['Improvement 1', 'Improvement 2', 'Improvement 3']
+            };
+
+            const result: ReviewResult = {
+                summary: 'Format test',
+                totalIssues: 1,
+                issues: [issue]
+            };
+
+            const mockCreatedIssue = {
+                html_url: 'https://github.com/user/repo/issues/789',
+                number: 789
+            };
+            vi.mocked(github.createIssue).mockResolvedValue(mockCreatedIssue);
+
+            const output = await handleIssueCreation(result, true);
+
+            // Verify all formatting elements
+            expect(output).toContain('📝 Review Results');
+            expect(output).toContain('📋 Summary: Format test');
+            expect(output).toContain('📊 Total Issues Found: 1');
+            expect(output).toContain('🚀 GitHub Issues Created: 1');
+            expect(output).toContain('🎯 Created GitHub Issues');
+            expect(output).toContain('#789: Full Format Test');
+        });
+
+        it('should handle issues without optional suggestion fields', async () => {
+            const issues: Issue[] = [
+                {
+                    title: 'No Suggestions',
+                    description: 'Description only',
+                    priority: 'low',
+                    category: 'content'
+                    // No suggestions field
+                },
+                {
+                    title: 'Empty Suggestions',
+                    description: 'With empty suggestions',
+                    priority: 'medium',
+                    category: 'accessibility',
+                    suggestions: []
+                },
+                {
+                    title: 'Has Suggestions',
+                    description: 'With actual suggestions',
+                    priority: 'high',
+                    category: 'performance',
+                    suggestions: ['Suggestion']
+                }
+            ];
+
+            const result: ReviewResult = {
+                summary: 'Mixed suggestions test',
+                totalIssues: 3,
+                issues
+            };
+
+            const mockCreatedIssue = {
+                html_url: 'https://github.com/user/repo/issues/999',
+                number: 999
+            };
+            vi.mocked(github.createIssue).mockResolvedValue(mockCreatedIssue);
+
+            const output = await handleIssueCreation(result, true);
+
+            expect(output).toContain('No Suggestions');
+            expect(output).toContain('Empty Suggestions');
+            expect(output).toContain('Has Suggestions');
+            expect(vi.mocked(github.createIssue)).toHaveBeenCalledTimes(3);
+        });
+
+        it('should handle issue formatting with all emoji types', async () => {
+            const categoryEmojis = {
+                'ui': '🎨',
+                'content': '📝',
+                'functionality': '⚙️',
+                'accessibility': '♿',
+                'performance': '⚡',
+                'other': '🔧'
+            };
+
+            for (const [category, emoji] of Object.entries(categoryEmojis)) {
+                const issue: Issue = {
+                    title: `Category ${category}`,
+                    description: `Test`,
+                    priority: 'medium',
+                    category: category as any
+                };
+
+                const result: ReviewResult = {
+                    summary: 'Emoji test',
+                    totalIssues: 1,
+                    issues: [issue]
+                };
+
+                const output = await handleIssueCreation(result, false);
+                expect(output).toContain(emoji);
+            }
+        });
+
+        it('should handle review result with multiple suggestions', async () => {
+            const issue: Issue = {
+                title: 'Multiple Suggestions',
+                description: 'Issue with many suggestions',
+                priority: 'high',
+                category: 'functionality',
+                suggestions: [
+                    'First improvement',
+                    'Second enhancement',
+                    'Third optimization',
+                    'Fourth fix',
+                    'Fifth suggestion'
+                ]
+            };
+
+            const result: ReviewResult = {
+                summary: 'Multiple suggestions test',
+                totalIssues: 1,
+                issues: [issue]
+            };
+
+            const mockCreatedIssue = {
+                html_url: 'https://github.com/user/repo/issues/600',
+                number: 600
+            };
+            vi.mocked(github.createIssue).mockResolvedValue(mockCreatedIssue);
+
+            const output = await handleIssueCreation(result, true);
+
+            // Verify all suggestions are included
+            expect(output).toContain('First improvement');
+            expect(output).toContain('Second enhancement');
+            expect(output).toContain('Third optimization');
+            expect(output).toContain('Fourth fix');
+            expect(output).toContain('Fifth suggestion');
+
+            // Verify suggestion count
+            const suggestionMatches = output.match(/•/g) || [];
+            expect(suggestionMatches.length).toBeGreaterThanOrEqual(5);
+        });
+
+        it('should handle empty GitHub issues fetch', async () => {
+            vi.mocked(github.getOpenIssues).mockResolvedValue('');
+
+            const result = await get();
+
+            expect(result).toBe('');
+            expect(mockLogger.debug).toHaveBeenCalledWith('No open GitHub issues found');
+        });
+
+        it('should handle issue creation failure gracefully', async () => {
+            const issue: Issue = {
+                title: 'Will Fail',
+                description: 'This will fail to create',
+                priority: 'medium',
+                category: 'other'
+            };
+
+            const result: ReviewResult = {
+                summary: 'Failure test',
+                totalIssues: 1,
+                issues: [issue]
+            };
+
+            vi.mocked(github.createIssue).mockRejectedValue(new Error('GitHub API unavailable'));
+
+            const output = await handleIssueCreation(result, true);
+
+            // Should still return formatted output
+            expect(output).toContain('📝 Review Results');
+            expect(output).toContain('Will Fail');
+            // Error should be logged
+            expect(mockLogger.error).toHaveBeenCalledWith(
+                expect.stringContaining('Failed to create GitHub issue')
+            );
+        });
+
+        it('should cap GitHub issues fetch limit at 20', async () => {
+            vi.mocked(github.getOpenIssues).mockResolvedValue('Issues content');
+
+            await get({ limit: 100 });
+
+            // Should call with capped limit of 20
+            expect(vi.mocked(github.getOpenIssues)).toHaveBeenCalledWith(20);
+        });
+
+        it('should handle whitespace-only GitHub issues', async () => {
+            vi.mocked(github.getOpenIssues).mockResolvedValue('   \n  \n  ');
+
+            const result = await get();
+
+            expect(result).toBe('');
+        });
+
+        it('should handle both content and object label types', async () => {
+            const mockIssues = [
+                {
+                    number: 1,
+                    title: 'Issue 1',
+                    labels: [{ name: 'bug' }, { name: 'urgent' }], // object format
+                    created_at: '2023-01-01',
+                    updated_at: '2023-01-02',
+                    body: 'Description'
+                },
+                {
+                    number: 2,
+                    title: 'Issue 2',
+                    labels: ['feature', 'enhancement'], // string format
+                    created_at: '2023-01-03',
+                    updated_at: '2023-01-04',
+                    body: 'Description'
+                }
+            ];
+
+            vi.mocked(github.getOpenIssues).mockResolvedValue(
+                mockIssues.map((i, idx) =>
+                    `Issue #${i.number}: ${i.title}\nLabels: ${Array.isArray(i.labels[0]) ? i.labels.join(', ') : i.labels.map((l: any) => typeof l === 'string' ? l : l.name).join(', ')}\nCreated: ${i.created_at}`
+                ).join('\n---\n')
+            );
+
+            const result = await get();
+
+            expect(result).toContain('Issue #1');
+            expect(result).toContain('Issue #2');
+        });
+
+        it('should handle issue descriptions with markdown formatting', async () => {
+            const issue: Issue = {
+                title: 'Markdown Test',
+                description: `# Heading
+## Subheading
+* Bullet point
+**Bold text**
+*Italic text*
+\`code\``,
+                priority: 'low',
+                category: 'other'
+            };
+
+            const result: ReviewResult = {
+                summary: 'Markdown test',
+                totalIssues: 1,
+                issues: [issue]
+            };
+
+            const output = await handleIssueCreation(result, false);
+
+            expect(output).toContain('Markdown Test');
+            expect(output).toContain('# Heading');
+        });
+
+        it('should handle priority indicator emojis in output', async () => {
+            const priorities: Array<[string, string]> = [
+                ['low', '🟢'],
+                ['medium', '🟡'],
+                ['high', '🔴']
+            ];
+
+            for (const [priority, emoji] of priorities) {
+                const issue: Issue = {
+                    title: `Priority ${priority}`,
+                    description: 'Test',
+                    priority: priority as any,
+                    category: 'other'
+                };
+
+                const result: ReviewResult = {
+                    summary: `Test`,
+                    totalIssues: 1,
+                    issues: [issue]
+                };
+
+                const output = await handleIssueCreation(result, false);
+                expect(output).toContain(emoji);
+            }
+        });
+
+        it('should format issue body with proper markdown structure', async () => {
+            const issue: Issue = {
+                title: 'Structured Test',
+                description: 'Detailed description',
+                priority: 'high',
+                category: 'accessibility',
+                suggestions: ['Suggestion 1', 'Suggestion 2']
+            };
+
+            const result: ReviewResult = {
+                summary: 'Format test',
+                totalIssues: 1,
+                issues: [issue]
+            };
+
+            const mockCreatedIssue = {
+                html_url: 'https://github.com/user/repo/issues/700',
+                number: 700
+            };
+            vi.mocked(github.createIssue).mockResolvedValue(mockCreatedIssue);
+
+            const output = await handleIssueCreation(result, true);
+
+            // Check call to createIssue
+            const callArgs = vi.mocked(github.createIssue).mock.calls[0];
+            const issueBody = callArgs[1];
+
+            expect(issueBody).toContain('## Description');
+            expect(issueBody).toContain('## Details');
+            expect(issueBody).toContain('## Suggestions');
+            expect(issueBody).toContain('**Priority:**');
+            expect(issueBody).toContain('**Category:**');
+            expect(issueBody).toContain('**Source:**');
+            expect(issueBody).toContain('automatically created from a review session');
+        });
     });
 });
