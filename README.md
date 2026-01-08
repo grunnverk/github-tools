@@ -301,12 +301,12 @@ Apache-2.0 - see [LICENSE](LICENSE) file for details.
 
 ## Author
 
-Calen Varek <calenvarek@gmail.com>
+Tim O'Brien <tobrien@discursive.com>
 
 ## Related Projects
 
-- [kodrdriv](https://github.com/calenvarek/kodrdriv) - AI-powered Git workflow automation tool
-- [@eldrforge/git-tools](https://github.com/calenvarek/git-tools) - Git utilities for automation
+- [kodrdriv](https://github.com/grunnverk/kodrdriv) - AI-powered Git workflow automation tool
+- [@eldrforge/git-tools](https://github.com/grunnverk/git-tools) - Git utilities for automation
 
 
 TEST
