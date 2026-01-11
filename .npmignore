@@ -46,7 +46,9 @@ Thumbs.db
 # Documentation that shouldn't be in package
 *.md
 !README.md
+!guide/**/*.md
 
-# Include dist directory with all its contents
+# Include dist and guide directories with all their contents
 !dist/
+!guide/
 
