@@ -1,5 +1,5 @@
 {
-  "name": "@eldrforge/github-tools",
+  "name": "@grunnverk/github-tools",
   "version": "1.0.0-dev.0",
   "description": "GitHub API utilities for automation - PR management, issue tracking, workflow monitoring",
   "main": "dist/index.js",
@@ -45,7 +45,7 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@eldrforge/git-tools": "^1.0.1",
+    "@grunnverk/git-tools": "^1.0.1",
     "@octokit/rest": "^22.0.0"
   },
   "peerDependencies": {
