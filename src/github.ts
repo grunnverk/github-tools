@@ -1,7 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import { getLogger } from './logger';
 import { PullRequest, MergeMethod, PromptFunction } from './types';
-import { run } from '@eldrforge/git-tools';
+import { run } from '@grunnverk/git-tools';
 
 // Make promptConfirmation injectable
 const defaultPrompt: PromptFunction = async (message: string) => {

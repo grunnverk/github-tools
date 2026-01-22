@@ -1,9 +1,9 @@
 import { Octokit } from '@octokit/rest';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import * as child from '@eldrforge/git-tools';
+import * as child from '@grunnverk/git-tools';
 import * as GitHub from '../src/github';
 
-vi.mock('@eldrforge/git-tools', () => ({
+vi.mock('@grunnverk/git-tools', () => ({
     run: vi.fn(),
     runSecure: vi.fn(),
     runSecureWithInheritedStdio: vi.fn(),

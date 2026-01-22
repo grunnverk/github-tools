@@ -57,7 +57,7 @@ export default defineConfig({
         },
         rollupOptions: {
             external: [
-                '@eldrforge/git-tools',
+                '@grunnverk/git-tools',
                 '@octokit/rest',
                 'winston'
             ],

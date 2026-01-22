@@ -1,9 +1,9 @@
 import { Octokit } from '@octokit/rest';
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
-import * as child from '@eldrforge/git-tools';
+import * as child from '@grunnverk/git-tools';
 import { checkWorkflowConfiguration } from '../src/github';
 
-vi.mock('@eldrforge/git-tools', () => ({
+vi.mock('@grunnverk/git-tools', () => ({
     run: vi.fn(),
 }));
 
