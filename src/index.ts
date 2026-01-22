@@ -1,5 +1,5 @@
 /**
- * @eldrforge/github-tools
+ * @grunnverk/github-tools
  *
  * GitHub API utilities for automation - PR management, issue tracking, workflow monitoring
  */
