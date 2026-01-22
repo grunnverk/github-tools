@@ -1,4 +1,4 @@
-# @eldrforge/github-tools - Agentic Guide
+# @grunnverk/github-tools - Agentic Guide
 
 ## Purpose
 
@@ -20,7 +20,7 @@ import {
   createIssue,
   publishReleaseNotes,
   getPRStatus
-} from '@eldrforge/github-tools';
+} from '@grunnverk/github-tools';
 
 // Create pull request
 const pr = await createPullRequest({
@@ -51,7 +51,7 @@ await publishReleaseNotes({
 
 ## Dependencies
 
-- @eldrforge/git-tools - Git operations
+- @grunnverk/git-tools - Git operations
 - @octokit/rest - GitHub API client
 
 ## Package Structure

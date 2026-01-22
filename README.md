@@ -1,4 +1,4 @@
-# @eldrforge/github-tools
+# @grunnverk/github-tools
 
 GitHub API utilities for automation - PR management, issue tracking, workflow monitoring.
 
@@ -16,13 +16,13 @@ GitHub API utilities for automation - PR management, issue tracking, workflow mo
 ## Installation
 
 ```bash
-npm install @eldrforge/github-tools
+npm install @grunnverk/github-tools
 ```
 
 ## Quick Start
 
 ```typescript
-import { createPullRequest, mergePullRequest, getRepoDetails } from '@eldrforge/github-tools';
+import { createPullRequest, mergePullRequest, getRepoDetails } from '@grunnverk/github-tools';
 
 // Get repository details
 const { owner, repo } = await getRepoDetails();
@@ -56,7 +56,7 @@ export GITHUB_TOKEN="ghp_your_token_here"
 By default, github-tools uses a console-based logger. You can provide your own logger implementation (e.g., Winston):
 
 ```typescript
-import { setLogger } from '@eldrforge/github-tools';
+import { setLogger } from '@grunnverk/github-tools';
 import winston from 'winston';
 
 // Create Winston logger
@@ -75,7 +75,7 @@ setLogger(logger);
 For interactive operations (like merge confirmations), you can provide a custom prompt function:
 
 ```typescript
-import { setPromptFunction } from '@eldrforge/github-tools';
+import { setPromptFunction } from '@grunnverk/github-tools';
 
 // Custom prompt implementation
 const myPrompt = async (message: string): Promise<boolean> => {
@@ -98,7 +98,7 @@ import {
     findOpenPullRequestByHeadRef,
     updatePullRequest,
     mergePullRequest
-} from '@eldrforge/github-tools';
+} from '@grunnverk/github-tools';
 
 // Create PR
 const pr = await createPullRequest('title', 'body', 'head', 'base');
@@ -123,7 +123,7 @@ import {
     createIssue,
     getOpenIssues,
     getRecentClosedIssuesForCommit
-} from '@eldrforge/github-tools';
+} from '@grunnverk/github-tools';
 
 // Create issue
 const issue = await createIssue(
@@ -146,7 +146,7 @@ import {
     findMilestoneByTitle,
     createMilestone,
     closeMilestone
-} from '@eldrforge/github-tools';
+} from '@grunnverk/github-tools';
 
 // Find existing milestone
 const milestone = await findMilestoneByTitle('v1.0.0');
@@ -168,7 +168,7 @@ import {
     createGitHubRelease,
     getReleaseByTag,
     getAllReleases
-} from '@eldrforge/github-tools';
+} from '@grunnverk/github-tools';
 
 // Create release
 await createGitHubRelease(
@@ -192,7 +192,7 @@ const allReleases = await getAllReleases();
 import {
     waitForWorkflowsToComplete,
     getWorkflowRunsForCommit
-} from '@eldrforge/github-tools';
+} from '@grunnverk/github-tools';
 
 // Wait for workflows to complete (with timeout)
 await waitForWorkflowsToComplete('abc123', 300); // 5 minutes
@@ -291,7 +291,7 @@ npm run watch
 
 ## Dependencies
 
-- **@eldrforge/git-tools**: Git operations and utilities
+- **@grunnverk/git-tools**: Git operations and utilities
 - **@octokit/rest**: GitHub API client
 - **winston** (peer, optional): Logging framework
 
@@ -306,7 +306,7 @@ Tim O'Brien <tobrien@discursive.com>
 ## Related Projects
 
 - [kodrdriv](https://github.com/grunnverk/kodrdriv) - AI-powered Git workflow automation tool
-- [@eldrforge/git-tools](https://github.com/grunnverk/git-tools) - Git utilities for automation
+- [@grunnverk/git-tools](https://github.com/grunnverk/git-tools) - Git utilities for automation
 
 
 TEST
