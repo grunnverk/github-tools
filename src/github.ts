@@ -41,6 +41,19 @@ export const getCurrentBranchName = async (cwd?: string): Promise<string> => {
 };
 
 export const getRepoDetails = async (cwd?: string): Promise<{ owner: string; repo: string }> => {
+    const logger = getLogger();
+    
+    // Check for context from environment (set by parallel execution)
+    if (process.env.KODRDRIV_CONTEXT_REPOSITORY_OWNER && process.env.KODRDRIV_CONTEXT_REPOSITORY_NAME) {
+        const owner = process.env.KODRDRIV_CONTEXT_REPOSITORY_OWNER;
+        const repo = process.env.KODRDRIV_CONTEXT_REPOSITORY_NAME;
+        
+        logger.debug(`Using repository details from execution context: ${owner}/${repo}`);
+        
+        return { owner, repo };
+    }
+    
+    // Fall back to git detection (sequential mode)
     try {
         const { stdout } = await run('git remote get-url origin', { cwd, suppressErrorLogging: true });
         const url = stdout.trim();
@@ -70,7 +83,6 @@ export const getRepoDetails = async (cwd?: string): Promise<{ owner: string; rep
 
         return { owner, repo };
     } catch (error: any) {
-        const logger = getLogger();
         const isNotGitRepo = error.message.includes('not a git repository');
         const hasNoOrigin = error.message.includes('remote origin does not exist');
 
