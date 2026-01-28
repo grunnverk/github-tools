@@ -47,6 +47,7 @@ export default defineConfig({
             exclude: ['tests/**/*', 'node_modules/**/*'],
             rollupTypes: true,
             outDir: 'dist',
+            entryRoot: 'src',
         }),
     ],
     build: {
