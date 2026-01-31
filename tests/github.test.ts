@@ -604,16 +604,13 @@ describe('GitHub Utilities', () => {
                 },
             });
 
-            // Mock check details for each failed check
+            // Mock check details for each failed check (only failure and timed_out, not cancelled)
             mockOctokit.checks.get
                 .mockResolvedValueOnce({
                     data: { output: { title: 'Linting errors found', summary: 'Code style violations detected' } }
                 })
                 .mockResolvedValueOnce({
                     data: { output: { title: 'Build timeout', summary: 'Build took too long to complete' } }
-                })
-                .mockResolvedValueOnce({
-                    data: { output: { title: 'Tests cancelled', summary: 'Test run was cancelled' } }
                 });
 
             try {
@@ -623,8 +620,9 @@ describe('GitHub Utilities', () => {
                 const { PullRequestCheckError } = await import('../src/errors');
                 expect(error).toBeInstanceOf(PullRequestCheckError);
                 expect(error.prNumber).toBe(123);
-                expect(error.failedChecks).toHaveLength(3);
-                expect(error.message).toContain('3 checks failed');
+                // Only failure and timed_out are treated as failures, cancelled is not
+                expect(error.failedChecks).toHaveLength(2);
+                expect(error.message).toContain('2 checks failed');
 
                 const instructions = error.getRecoveryInstructions();
                 expect(instructions).toBeTruthy();
@@ -3958,7 +3956,8 @@ jobs:
             for (const conclusionType of testConclusionTypes) {
                 mockOctokit.pulls.get.mockResolvedValue({ data: { head: { sha: 'test-sha' } } });
 
-                if (['failure', 'cancelled', 'timed_out'].includes(conclusionType)) {
+                // Only failure and timed_out should cause failures, cancelled is not treated as failure
+                if (['failure', 'timed_out'].includes(conclusionType)) {
                     // These should cause failures
                     vi.spyOn(GitHub, 'getRepoDetails').mockResolvedValue({ owner: 'test-owner', repo: 'test-repo' });
                     mockRun.mockImplementation(async (command: string) => {
@@ -3995,7 +3994,7 @@ jobs:
                         expect(error.failedChecks[0].conclusion).toBe(conclusionType);
                     }
                 } else {
-                    // These should pass
+                    // These should pass (including 'cancelled')
                     mockOctokit.checks.listForRef.mockResolvedValue({
                         data: {
                             check_runs: [{

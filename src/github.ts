@@ -642,9 +642,24 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
         consecutiveNoChecksCount = 0;
 
         // ... rest of the while loop logic ...
+        // Filter for actual failures, excluding cancelled checks
+        // Cancelled checks are typically from workflows that cancel themselves (e.g., concurrency groups)
+        // and should not be treated as failures
         const failingChecks = checkRuns.filter(
-            (cr) => cr.conclusion && ['failure', 'timed_out', 'cancelled'].includes(cr.conclusion)
+            (cr) => cr.conclusion && ['failure', 'timed_out'].includes(cr.conclusion)
         );
+        
+        // Track cancelled checks separately for informational purposes
+        const cancelledChecks = checkRuns.filter(
+            (cr) => cr.conclusion === 'cancelled'
+        );
+        
+        if (cancelledChecks.length > 0) {
+            logger.info(`PR #${prNumber}: ${cancelledChecks.length} check${cancelledChecks.length > 1 ? 's' : ''} cancelled (not treated as failure):`);
+            for (const check of cancelledChecks) {
+                logger.info(`  🚫 ${check.name}: cancelled`);
+            }
+        }
 
         if (failingChecks.length > 0) {
             const { owner, repo } = await getRepoDetails(options.cwd);
