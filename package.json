@@ -45,7 +45,7 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@grunnverk/git-tools": "^1.5.14",
+    "@grunnverk/git-tools": "^1.5.15",
     "@octokit/rest": "^22.0.0"
   },
   "peerDependencies": {
