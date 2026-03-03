@@ -519,8 +519,28 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
         });
 
         const checkRuns = checkRunsResponse.data.check_runs;
+        const rawCheckRunCount = checkRuns.length;
 
-        if (checkRuns.length === 0) {
+        // Deduplicate checks by name and keep the most recent run per check.
+        // This avoids stale runs (for example, cancelled + in_progress anomalies)
+        // from blocking completion logic forever.
+        const latestByName = new Map<string, any>();
+        for (const checkRun of checkRuns) {
+            const key = checkRun.name || `check-${String(checkRun.id ?? latestByName.size)}`;
+            const current = latestByName.get(key);
+            if (!current || isNewerCheckRun(checkRun, current)) {
+                latestByName.set(key, checkRun);
+            }
+        }
+        const normalizedCheckRuns = Array.from(latestByName.values());
+
+        if (normalizedCheckRuns.length < rawCheckRunCount) {
+            logger.debug(
+                `PR #${prNumber}: Deduplicated check runs by name (${rawCheckRunCount} → ${normalizedCheckRuns.length}).`
+            );
+        }
+
+        if (normalizedCheckRuns.length === 0) {
             consecutiveNoChecksCount++;
             logger.info(`PR #${prNumber}: No checks found (${consecutiveNoChecksCount}/${maxConsecutiveNoChecks}). Waiting...`);
 
@@ -645,12 +665,12 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
         // Filter for actual failures, excluding cancelled checks
         // Cancelled checks are typically from workflows that cancel themselves (e.g., concurrency groups)
         // and should not be treated as failures
-        const failingChecks = checkRuns.filter(
+        const failingChecks = normalizedCheckRuns.filter(
             (cr) => cr.conclusion && ['failure', 'timed_out'].includes(cr.conclusion)
         );
         
         // Track cancelled checks separately for informational purposes
-        const cancelledChecks = checkRuns.filter(
+        const cancelledChecks = normalizedCheckRuns.filter(
             (cr) => cr.conclusion === 'cancelled'
         );
         
@@ -747,18 +767,51 @@ export const waitForPullRequestChecks = async (prNumber: number, options: { time
             throw prError;
         }
 
-        const allChecksCompleted = checkRuns.every((cr) => cr.status === 'completed');
+        const allChecksCompleted = normalizedCheckRuns.every((cr) => isTerminalCheckRun(cr));
 
         if (allChecksCompleted) {
             logger.info(`All checks for PR #${prNumber} have completed successfully.`);
             return;
         }
 
-        const completedCount = checkRuns.filter(cr => cr.status === 'completed').length;
-        logger.info(`PR #${prNumber} checks: ${completedCount}/${checkRuns.length} completed. Waiting...`);
+        const completedCount = normalizedCheckRuns.filter(cr => isTerminalCheckRun(cr)).length;
+        logger.info(`PR #${prNumber} checks: ${completedCount}/${normalizedCheckRuns.length} completed. Waiting...`);
 
         await delay(10000); // wait 10 seconds
     }
+};
+
+const isTerminalCheckRun = (checkRun: any): boolean => {
+    // Treat non-empty conclusion as terminal even if status is stale/inconsistent.
+    // Some GitHub API responses can report status=in_progress with conclusion=cancelled.
+    if (checkRun.status === 'completed') {
+        return true;
+    }
+    return typeof checkRun.conclusion === 'string' && checkRun.conclusion.length > 0;
+};
+
+const getCheckRunTimestamp = (checkRun: any): number => {
+    const timestamp =
+        checkRun.completed_at ||
+        checkRun.started_at ||
+        checkRun.updated_at ||
+        checkRun.created_at;
+    if (!timestamp) {
+        return 0;
+    }
+    const parsed = new Date(timestamp).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const isNewerCheckRun = (candidate: any, current: any): boolean => {
+    const candidateTs = getCheckRunTimestamp(candidate);
+    const currentTs = getCheckRunTimestamp(current);
+    if (candidateTs !== currentTs) {
+        return candidateTs > currentTs;
+    }
+    const candidateId = typeof candidate.id === 'number' ? candidate.id : 0;
+    const currentId = typeof current.id === 'number' ? current.id : 0;
+    return candidateId > currentId;
 };
 
 export const mergePullRequest = async (
