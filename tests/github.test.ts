@@ -657,6 +657,55 @@ describe('GitHub Utilities', () => {
             await expect(promise).resolves.toBeUndefined();
             expect(mockOctokit.checks.listForRef).toHaveBeenCalledTimes(2);
         });
+
+        it('should treat cancelled checks as terminal even with stale in_progress status', async () => {
+            mockOctokit.pulls.get.mockResolvedValue({ data: { head: { sha: 'test-sha' } } });
+            mockOctokit.checks.listForRef.mockResolvedValue({
+                data: {
+                    check_runs: [
+                        { id: 1, name: 'test', status: 'in_progress', conclusion: 'cancelled' },
+                        { id: 2, name: 'publish-npm', status: 'completed', conclusion: 'success' },
+                    ],
+                },
+            });
+
+            await expect(GitHub.waitForPullRequestChecks(123)).resolves.toBeUndefined();
+            expect(mockOctokit.checks.listForRef).toHaveBeenCalledTimes(1);
+        });
+
+        it('should dedupe duplicate check names and keep the newest run', async () => {
+            mockOctokit.pulls.get.mockResolvedValue({ data: { head: { sha: 'test-sha' } } });
+            mockOctokit.checks.listForRef.mockResolvedValue({
+                data: {
+                    check_runs: [
+                        {
+                            id: 10,
+                            name: 'test',
+                            status: 'in_progress',
+                            conclusion: null,
+                            started_at: '2026-03-03T16:00:00Z',
+                        },
+                        {
+                            id: 20,
+                            name: 'test',
+                            status: 'completed',
+                            conclusion: 'success',
+                            completed_at: '2026-03-03T16:01:00Z',
+                        },
+                        {
+                            id: 30,
+                            name: 'publish-npm',
+                            status: 'completed',
+                            conclusion: 'success',
+                            completed_at: '2026-03-03T16:01:30Z',
+                        },
+                    ],
+                },
+            });
+
+            await expect(GitHub.waitForPullRequestChecks(123)).resolves.toBeUndefined();
+            expect(mockOctokit.checks.listForRef).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('mergePullRequest', () => {
